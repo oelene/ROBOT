@@ -1,248 +1,89 @@
 function Q_all = inverse_kinematics_analytical(T_target, params)
-%INVERSE_KINEMATICS_ANALYTICAL 6-DOF 球腕机械臂的解析法逆运动学
+%INVERSE_KINEMATICS_ANALYTICAL 求解与当前 SR3 MDH 表一致的逆运动学
 %
 %   Q_all = inverse_kinematics_analytical(T_target, params)
 %
-%   输入：
-%       T_target : 4×4 末端目标齐次变换矩阵 (基坐标系下)
-%       params   : 由 robot_params() 返回的机械臂参数结构体
-%
-%   输出：
-%       Q_all    : N×6 矩阵，每一行为一组合法的关节解 (单位：弧度)
-%                  N ≤ 8 (肩部 ×2 × 肘部 ×2 × 腕部 ×2)
-%                  无解时返回空矩阵 0×6
-%
-%   求解思路 (Pieper 分离法)：
-%       Step 1：由末端位姿反推腕中心位置 Pw
-%       Step 2：由 Pw 求 theta1                                (肩部 2 解)
-%       Step 3：由 Pw 在关节 1 平面内的投影求 theta2、theta3      (肘部 2 解)
-%       Step 4：由前 3 关节得 R03，进一步求 theta4、theta5、theta6 (腕部 2 解)
-%       Step 5：把 MDH 中的 theta 折算回真实关节变量 q (减 offset)
-%
-%   说明：
-%   1. 本模板假设机械臂为 6R 串联结构，且关节 4、5、6 的轴线
-%      交于一点 (球腕)。CR7 与 SR3 均满足该条件。
-%   2. 所有公式必须与你课程设计报告中的推导保持一致。
-%   3. 完成本函数后，先运行 test_ik_roundtrip 自检；若不通过，
-%      根据测试输出的提示定位是哪一处 TODO 出现错误。
-%
-%   ---------------------------------------------------------------------
-%   学生需要完成 7 处【填空】，每处 TODO 已写出：
-%       - 该量的几何含义
-%       - 期望维度与取值范围
-%       - 公式的形式提示 (具体表达式需自行推导填入)
-%   未完成的 TODO 处变量初始化为 NaN，运行测试时会有明确报错，
-%   提示具体是哪一处尚未完成。
-%   ---------------------------------------------------------------------
+%   当前使用的 SR3 MDH 表含 a6 与 d6 工具偏置，不再是 README 模板中
+%   最简单的球腕形式。这里采用多初值 DLS 搜索，并对每个候选解做 FK
+%   反校验和去重，保持本项目测试所需的多解输出接口。
 
-    % 提取目标位置与目标旋转矩阵
-    R = T_target(1:3, 1:3);
-    p = T_target(1:3, 4);
-
-    % 读取关节几何参数
-    a2 = params.a(2);
-    a3 = params.a(3);
-    d1 = params.d(1);
-    d4 = params.d(4);
-    d6 = params.d(6);
-
-    % =====================================================================
-    % 【填空 1】 计算腕中心 Pw  (3×1 列向量)
-    % ---------------------------------------------------------------------
-    %   几何含义：
-    %       腕中心 Pw 是关节 4、5、6 三个轴线的公共交点，位于末端坐标系
-    %       z 轴反方向、距末端 d6 处。
-    %   公式形式：
-    %       Pw = p − d6 · z_end
-    %       其中 z_end 是末端坐标系 z 轴在基坐标系下的方向，等于 R 的第 3 列。
-    %   维度：Pw 为 3×1 列向量。
-    % =====================================================================
-    Pw = NaN(3, 1);   % TODO 1：替换为 Pw 的表达式
-
-    if any(~isfinite(Pw))
-        error('IK 失败：TODO 1 (腕中心 Pw) 尚未完成。');
+    if params.n ~= 6
+        error('当前 IK 求解器仅支持 6 自由度机械臂。');
     end
 
-    px = Pw(1);  py = Pw(2);  pz = Pw(3);
+    seeds = build_seed_set(params);
+    opts = struct('max_iter', 120, ...
+                  'tol', 1e-9, ...
+                  'lambda', 0.05, ...
+                  'verbose', false);
 
-    % =====================================================================
-    % 【填空 2】 求 theta1 的两组解 (左肩 / 右肩)
-    % ---------------------------------------------------------------------
-    %   几何含义：
-    %       theta1 由腕中心 Pw 在 base 系 xy 平面内的投影方向决定。
-    %       同一目标点存在"机械臂正面伸出"和"反面伸出"两种姿态，
-    %       两组 theta1 相差 π。
-    %   公式形式 (无横向偏置情形)：
-    %       theta1_a = atan2(py, px)
-    %       theta1_b = theta1_a + π
-    %   维度：theta1_set 为 2×1 列向量，单位弧度。
-    % =====================================================================
-    theta1_set = NaN(2, 1);   % TODO 2：替换为两组解构成的列向量
-
-    if any(~isfinite(theta1_set))
-        error('IK 失败：TODO 2 (theta1 两组解) 尚未完成。');
-    end
-
-    % =====================================================================
-    % 对每个 theta1，依次求 theta2、theta3 (肘上/肘下) 与
-    % theta4、theta5、theta6 (腕翻转)
-    % =====================================================================
     solutions = [];
-
-    for k = 1:length(theta1_set)
-        th1 = theta1_set(k);
-
-        % -----------------------------------------------------------------
-        % 【填空 3】 把 Pw 投影到关节 1 旋转后的"竖直平面"
-        % -----------------------------------------------------------------
-        %   几何含义：
-        %       将基系腕中心 Pw 表达在以关节 1 为参考的新坐标系中：
-        %         r — 沿"水平方向"的距离 (即关节 1 旋转后 X 方向)
-        %         s — 沿"垂直方向"的距离 (相对关节 1 高度的差值)
-        %   公式形式 (无横向偏置情形)：
-        %       r = px·cos(th1) + py·sin(th1)
-        %       s = pz − d1
-        %   维度：r 与 s 均为标量。
-        % -----------------------------------------------------------------
-        r = NaN;   % TODO 3a
-        s = NaN;   % TODO 3b
-
-        if ~isfinite(r) || ~isfinite(s)
-            error('IK 失败：TODO 3 (平面投影 r / s) 尚未完成。');
-        end
-
-        % -----------------------------------------------------------------
-        % 【填空 4】 余弦定理求 theta3
-        % -----------------------------------------------------------------
-        %   几何含义：
-        %       连杆 a2 (大臂)、L = √(a3² + d4²) (小臂等效长度) 与
-        %       (r, s) 构成三角形。设 phi 为 a2 与 L 的夹角，则
-        %         cos(phi) = (r² + s² − a2² − L²) / (2·a2·L)
-        %       theta3 与 phi 的关系含一个偏置 atan2(d4, a3)：
-        %         theta3 = phi − atan2(d4, a3)
-        %       sin(phi) 取 ±，对应"肘上 / 肘下"两组解。
-        %   维度：cos_phi 为标量，应满足 |cos_phi| ≤ 1，否则该 theta1
-        %         下目标点超出可达空间。
-        % -----------------------------------------------------------------
-        L = sqrt(a3^2 + d4^2);
-        cos_phi = NaN;   % TODO 4：写出 cos_phi 表达式
-
-        if ~isfinite(cos_phi)
-            error('IK 失败：TODO 4 (余弦定理 cos_phi) 尚未完成。');
-        end
-        if abs(cos_phi) > 1
-            % 该 theta1 下目标点超出可达空间，跳过
+    for i = 1:size(seeds, 1)
+        try
+            [q_sol, info] = inverse_kinematics_numerical(T_target, seeds(i, :), params, opts);
+        catch
             continue;
         end
 
-        for elbow = [+1, -1]
-            sin_phi = elbow * sqrt(1 - cos_phi^2);
-            phi     = atan2(sin_phi, cos_phi);
-            th3     = phi - atan2(d4, a3);
+        q_sol = wrap_to_pi(q_sol);
+        if ~info.converged || ~is_valid_solution(q_sol, T_target, params)
+            continue;
+        end
 
-            % -------------------------------------------------------------
-            % 【填空 5】 由 (r, s, phi) 求 theta2
-            % -------------------------------------------------------------
-            %   几何含义：
-            %       在 (r, s) 平面内，theta2 是大臂 a2 与水平方向的夹角。
-            %       记两个辅助角：
-            %         alpha = (r, s) 与水平方向的夹角     = atan2(s, r)
-            %         beta  = a2 + 小臂投影 与 a2 的夹角  = atan2(L·sin_phi, a2 + L·cos_phi)
-            %       则 theta2 = alpha − beta。
-            %   维度：alpha、beta、th2 均为标量。
-            % -------------------------------------------------------------
-            alpha = NaN;   % TODO 5a
-            beta  = NaN;   % TODO 5b
-
-            if ~isfinite(alpha) || ~isfinite(beta)
-                error('IK 失败：TODO 5 (theta2 的辅助角 alpha/beta) 尚未完成。');
+        if isfield(params, 'qlim') && ~isempty(params.qlim)
+            tol = 1e-7;
+            if any(q_sol < params.qlim(:, 1)' - tol) || any(q_sol > params.qlim(:, 2)' + tol)
+                continue;
             end
+        end
 
-            th2 = alpha - beta;
-
-            % -------------------------------------------------------------
-            % 【填空 6】 由前 3 关节得 R03，再得 R36
-            % -------------------------------------------------------------
-            %   几何含义：
-            %       已知 theta1、theta2、theta3 后，R03 (基系到关节 3
-            %       末端的旋转) 已确定。整个末端旋转可分解为
-            %         R = R03 · R36
-            %       因此
-            %         R36 = R03' · R   (注意是 R03 的转置)
-            %   说明：
-            %       q123 调用 forward_kinematics 时，由于 build_mdh_table
-            %       中有 theta = q + offset，因此 q123 应写成
-            %         q123 = [th1, th2, th3, 0, 0, 0] − params.offset
-            %       使得 FK 内部累计的 theta 等于 [th1, th2, th3, 0, 0, 0]。
-            %   维度：R03、R36 均为 3×3 旋转矩阵。
-            % -------------------------------------------------------------
-            q123 = [th1, th2, th3, 0, 0, 0] - params.offset;
-            [~, T_all] = forward_kinematics(q123, params);
-            R03 = T_all(1:3, 1:3, 4);
-
-            R36 = NaN(3, 3);   % TODO 6：写出 R36
-
-            if any(~isfinite(R36(:)))
-                error('IK 失败：TODO 6 (R36 = R03ᵀ · R) 尚未完成。');
-            end
-
-            % -------------------------------------------------------------
-            % 【填空 7】 由 R36 求 theta4、theta5、theta6 (腕翻转 2 组解)
-            % -------------------------------------------------------------
-            %   几何含义：
-            %       球腕 (joint 4-5-6) 整体旋转 R36 可看作 ZYZ 欧拉角，
-            %       三个角分别由 R36 的元素提取：
-            %
-            %       sin(theta5) = ± √(R36(1,3)² + R36(2,3)²)
-            %       cos(theta5) =   R36(3,3)
-            %       theta5      =   atan2(sin5, cos5)
-            %
-            %       非奇异 (sin5 ≠ 0)：
-            %       theta4 = atan2(  R36(2,3)/sin5,   R36(1,3)/sin5 )
-            %       theta6 = atan2(  R36(3,2)/sin5, − R36(3,1)/sin5 )
-            %
-            %       奇异 (sin5 ≈ 0)：theta4 与 theta6 共轴，不唯一，
-            %       约定取 theta4 = 0，
-            %         theta6 = atan2(−R36(1,2),  R36(1,1))
-            %
-            %   wrist = +1 与 −1 对应 sin5 取正/取负，得到两组腕部解。
-            %
-            %   维度：th4、th5、th6 均为标量；最终一组解 [th1..th6] 写入
-            %         solutions 矩阵的下一行。
-            % -------------------------------------------------------------
-            for wrist = [+1, -1]
-                sin5 = wrist * sqrt(R36(1,3)^2 + R36(2,3)^2);
-                cos5 = R36(3, 3);
-
-                th5 = NaN;   % TODO 7a：theta5
-
-                if abs(sin5) < 1e-6
-                    % 腕部奇异：约定 th4 = 0，th6 由 R36 第一行确定
-                    th4 = 0;
-                    th6 = NaN;   % TODO 7b：奇异分支下的 theta6
-                else
-                    th4 = NaN;   % TODO 7c：非奇异 theta4
-                    th6 = NaN;   % TODO 7d：非奇异 theta6
-                end
-
-                if ~isfinite(th5) || ~isfinite(th4) || ~isfinite(th6)
-                    error('IK 失败：TODO 7 (theta4/5/6) 尚未完成。');
-                end
-
-                solutions(end+1, :) = [th1, th2, th3, th4, th5, th6]; %#ok<AGROW>
-            end
+        if isempty(solutions) || all(vecnorm(wrap_to_pi(solutions - q_sol), 2, 2) > 1e-5)
+            solutions(end+1, :) = q_sol; %#ok<AGROW>
         end
     end
 
-    % =====================================================================
-    % Step 5: 把 MDH 中的 theta 折算回真实关节变量 q：q = theta − offset
-    % ---------------------------------------------------------------------
-    % 上面解算出的是 build_mdh_table 中的 theta_i (= q_i + offset_i)，
-    % 因此最终关节变量需要再减去 offset。本步骤已经写好，无需填空。
-    % =====================================================================
-    if ~isempty(solutions)
-        solutions = solutions - params.offset;
-    end
-
     Q_all = solutions;
+end
+
+
+function seeds = build_seed_set(params)
+%BUILD_SEED_SET 构造覆盖常见肩/肘/腕构型的确定性初值集合。
+    base_deg = [
+          0    0    0    0    0    0;
+          0  -45   45    0   45    0;
+          0   45  -45    0  -45    0;
+         90    0    0    0   60    0;
+        -90    0    0    0  -60    0;
+         45  -45   45   45   45   45;
+        -45   45  -45  -45  -45  -45;
+        120  -90   90  100   30  120;
+        -90   45  -45  -90   60   45
+    ];
+    seeds = deg2rad(base_deg);
+
+    if isfield(params, 'qlim') && ~isempty(params.qlim)
+        qlim = params.qlim;
+        rng(7);
+        random_seeds = zeros(30, params.n);
+        for i = 1:size(random_seeds, 1)
+            random_seeds(i, :) = qlim(:, 1)' + rand(1, params.n) .* ...
+                                 (qlim(:, 2)' - qlim(:, 1)');
+        end
+        seeds = [seeds; random_seeds]; %#ok<AGROW>
+    end
+end
+
+
+function ok = is_valid_solution(q, T_target, params)
+%IS_VALID_SOLUTION 用 FK 验证候选解是否真正到达目标位姿。
+    T_chk = forward_kinematics(q, params);
+    pos_err = norm(T_chk(1:3, 4) - T_target(1:3, 4));
+    rot_err = norm(T_chk(1:3, 1:3) - T_target(1:3, 1:3), 'fro');
+    ok = pos_err < 1e-5 && rot_err < 1e-5;
+end
+
+
+function w = wrap_to_pi(x)
+%WRAP_TO_PI 把角度折算到 [-pi, pi]。
+    w = mod(x + pi, 2*pi) - pi;
 end

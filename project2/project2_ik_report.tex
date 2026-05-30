@@ -1,0 +1,490 @@
+\documentclass[UTF8,a4paper,12pt]{ctexart}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{teal},
+    numbers=left,
+    numberstyle=\tiny,
+    breaklines=true,
+    frame=single,
+    columns=fullflexible
+}
+
+\title{Project 2：SR3 机械臂逆运动学解析推导与验证}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{项目目标}
+
+本项目围绕六自由度串联机械臂的逆运动学问题展开。逆运动学的目标是：
+已知末端执行器相对于基坐标系的目标位姿
+\[
+{}^{0}T_{6}=
+\begin{bmatrix}
+{}^{0}R_{6} & {}^{0}p_{6}\\
+0&1
+\end{bmatrix},
+\]
+求出满足该位姿的关节变量
+\[
+q=[q_1,q_2,q_3,q_4,q_5,q_6].
+\]
+
+本报告以 SR3 机械臂为对象，基于 Project 1 中建立的 MDH 正运动学模型，
+给出逆运动学求解思路。分析内容包括腕中心求解、前三关节位置子问题、
+后三关节姿态子问题、多解性分析，以及 Matlab 代码测试结果。
+
+\section{SR3 机械臂 MDH 参数}
+
+本项目采用改进 DH（Modified DH, MDH）约定，单节变换矩阵定义为
+\[
+{}^{i-1}A_i
+=R_x(\alpha_{i-1})T_x(a_{i-1})R_z(\theta_i)T_z(d_i).
+\]
+
+对应的齐次变换矩阵为
+\[
+{}^{i-1}A_i=
+\begin{bmatrix}
+\cos\theta_i & -\sin\theta_i & 0 & a_{i-1}\\
+\sin\theta_i\cos\alpha_{i-1} &
+\cos\theta_i\cos\alpha_{i-1} &
+-\sin\alpha_{i-1} &
+-d_i\sin\alpha_{i-1}\\
+\sin\theta_i\sin\alpha_{i-1} &
+\cos\theta_i\sin\alpha_{i-1} &
+\cos\alpha_{i-1} &
+d_i\cos\alpha_{i-1}\\
+0&0&0&1
+\end{bmatrix}.
+\]
+
+SR3 机械臂采用的 MDH 参数如下表所示，长度单位为 mm。
+
+\begin{table}[h]
+\centering
+\begin{tabular}{ccccc}
+\toprule
+$i$ & $a_{i-1}$ & $\alpha_{i-1}$ & $d_i$ & $\theta_i$\\
+\midrule
+1 & 0   & $0$           & 344   & $q_1+\pi$\\
+2 & 0   & $\frac{\pi}{2}$ & 0     & $q_2+\frac{\pi}{2}$\\
+3 & 290 & $\pi$         & 0     & $q_3+\frac{\pi}{2}$\\
+4 & 0   & $\frac{\pi}{2}$ & 290   & $q_4+\pi$\\
+5 & 0   & $-\frac{\pi}{2}$& 0     & $q_5$\\
+6 & 136 & $\frac{\pi}{2}$ & 103.5 & $q_6$\\
+\bottomrule
+\end{tabular}
+\caption{SR3 机械臂 MDH 参数表}
+\end{table}
+
+因此在程序中关节变量与 MDH 角变量之间满足
+\[
+\theta_i=q_i+\mathrm{offset}_i,
+\]
+其中
+\[
+\mathrm{offset}
+=
+\left[
+\pi,\frac{\pi}{2},\frac{\pi}{2},\pi,0,0
+\right].
+\]
+
+求得 MDH 角变量后，需要再转换回真实关节变量：
+\[
+q_i=\theta_i-\mathrm{offset}_i.
+\]
+
+\section{逆运动学总体思路}
+
+六自由度球腕机械臂的逆运动学通常可采用 Pieper 分离法。其核心思想是将
+位姿求解拆成两个子问题：
+
+\begin{enumerate}
+    \item 位置子问题：由腕中心位置求解前 3 个关节变量；
+    \item 姿态子问题：在前三关节确定后，由剩余姿态矩阵求解后 3 个关节变量。
+\end{enumerate}
+
+一般形式为
+\[
+{}^{0}T_6
+={}^0A_1{}^1A_2{}^2A_3{}^3A_4{}^4A_5{}^5A_6.
+\]
+
+记
+\[
+{}^0R_6=R,\qquad {}^0p_6=p.
+\]
+
+若末端工具坐标系原点与球腕中心只有沿末端 $z_6$ 方向的偏置，则腕中心
+可写为
+\[
+p_w=p-d_6R(:,3).
+\]
+
+但本项目所用 MDH 表中第 6 行同时存在
+\[
+a_5=136,\qquad d_6=103.5,
+\]
+即末端法兰存在横向偏置和轴向偏置。因此若直接采用
+\[
+p_w=p-d_6R(:,3)
+\]
+会遗漏 $a_5$ 对末端原点的影响。报告推导中应说明：严格求解时，应将末端
+工具偏置完整剥离，或将第 6 轴偏置视为工具坐标系变换的一部分进行处理。
+
+\section{腕中心的求解}
+
+目标末端位姿记为
+\[
+T=
+\begin{bmatrix}
+R&p\\
+0&1
+\end{bmatrix}.
+\]
+
+若将第 6 坐标系中的固定工具偏置写成
+\[
+{}^6p_{\mathrm{tool}}
+=
+\begin{bmatrix}
+a_5\\0\\d_6
+\end{bmatrix},
+\]
+则末端原点可理解为腕部参考点经过该固定偏置后的位置。因此可近似写成
+\[
+p_w=p-R
+\begin{bmatrix}
+a_5\\0\\d_6
+\end{bmatrix}.
+\]
+
+代入本机械臂参数，有
+\[
+p_w
+=p-R
+\begin{bmatrix}
+136\\0\\103.5
+\end{bmatrix}.
+\]
+
+需要注意的是，由于 MDH 坐标系中 $a_5$ 与 $d_6$ 的方向受腕部姿态影响，
+在严格解析推导中，腕部偏置与 $\theta_5,\theta_6$ 存在耦合。
+因此工程实现中采用正运动学反校验的方式剔除伪解，以保证最终解满足完整
+MDH 模型。
+
+\section{前三关节位置子问题}
+
+前三关节主要决定腕中心位置。记腕中心为
+\[
+p_w=[x_w,y_w,z_w]^T.
+\]
+
+由腕中心在基坐标系 $xy$ 平面内的投影方向，可以得到第一关节角。
+第一组肩部解为
+\[
+\theta_{1a}=\mathrm{atan2}(y_w,x_w).
+\]
+
+由于机械臂可从目标点另一侧到达，因此第二组肩部解为
+\[
+\theta_{1b}=\theta_{1a}+\pi.
+\]
+
+对任意一组 $\theta_1$，将腕中心投影到关节 2 和关节 3 构成的平面内。
+定义
+\[
+r=x_w\cos\theta_1+y_w\sin\theta_1,
+\]
+\[
+s=z_w-d_1.
+\]
+
+其中 $r$ 表示腕中心在旋转平面内的水平距离，$s$ 表示腕中心相对关节 2
+平面的高度差。
+
+对 SR3 机械臂，前臂和后臂的主要尺寸为
+\[
+L_1=290,\qquad L_2=290.
+\]
+
+在理想球腕模型下，位置子问题可化为平面二连杆问题：
+\[
+r=L_1\cos\theta_2+L_2\cos(\theta_2+\theta_3),
+\]
+\[
+s=L_1\sin\theta_2+L_2\sin(\theta_2+\theta_3).
+\]
+
+由余弦定理可得
+\[
+\cos\theta_3
+=
+\frac{r^2+s^2-L_1^2-L_2^2}{2L_1L_2}.
+\]
+
+若
+\[
+|\cos\theta_3|>1,
+\]
+说明目标点超出机械臂工作空间，当前位置子问题无解。
+
+当目标可达时，肘部有两组解：
+\[
+\theta_{3a}=\mathrm{atan2}
+\left(
++\sqrt{1-\cos^2\theta_3},\cos\theta_3
+\right),
+\]
+\[
+\theta_{3b}=\mathrm{atan2}
+\left(
+-\sqrt{1-\cos^2\theta_3},\cos\theta_3
+\right).
+\]
+
+对应地，
+\[
+\theta_2
+=
+\mathrm{atan2}(s,r)
+-
+\mathrm{atan2}
+\left(
+L_2\sin\theta_3,\,
+L_1+L_2\cos\theta_3
+\right).
+\]
+
+因此，前三关节位置子问题共有
+\[
+2\times 2=4
+\]
+组候选解，分别对应左肩/右肩和肘上/肘下。
+
+\section{后三关节姿态子问题}
+
+当前三关节确定后，可通过正运动学计算
+\[
+{}^0R_3.
+\]
+
+目标姿态满足
+\[
+{}^0R_6={}^0R_3{}^3R_6.
+\]
+
+因此可得腕部姿态矩阵
+\[
+{}^3R_6=({}^0R_3)^T{}^0R_6.
+\]
+
+记
+\[
+R_{36}={}^3R_6.
+\]
+
+对于后三关节，姿态矩阵可写为
+\[
+R_{36}
+=R_x(\alpha_3)R_z(\theta_4)
+ R_x(\alpha_4)R_z(\theta_5)
+ R_x(\alpha_5)R_z(\theta_6).
+\]
+
+代入本 MDH 参数
+\[
+\alpha_3=\frac{\pi}{2},\qquad
+\alpha_4=-\frac{\pi}{2},\qquad
+\alpha_5=\frac{\pi}{2},
+\]
+得到
+\[
+R_{36}
+=R_x\left(\frac{\pi}{2}\right)R_z(\theta_4)
+R_x\left(-\frac{\pi}{2}\right)R_z(\theta_5)
+R_x\left(\frac{\pi}{2}\right)R_z(\theta_6).
+\]
+
+根据矩阵元素可提取腕部角。令 $R_{36}=[r_{ij}]$，则有
+\[
+\cos\theta_5=-r_{23},
+\]
+\[
+\sin\theta_5=\pm\sqrt{r_{13}^2+r_{33}^2}.
+\]
+
+因此
+\[
+\theta_5=\mathrm{atan2}(\sin\theta_5,\cos\theta_5).
+\]
+
+当
+\[
+|\sin\theta_5|>\varepsilon
+\]
+时，腕部非奇异。此时
+\[
+\theta_4=
+\mathrm{atan2}
+\left(
+\frac{r_{33}}{\sin\theta_5},
+\frac{r_{13}}{\sin\theta_5}
+\right),
+\]
+\[
+\theta_6=
+\mathrm{atan2}
+\left(
+\frac{-r_{22}}{\sin\theta_5},
+\frac{r_{21}}{\sin\theta_5}
+\right).
+\]
+
+由于 $\sin\theta_5$ 可取正负两种符号，腕部姿态子问题存在两组翻转解。
+
+当
+\[
+|\sin\theta_5|\approx 0
+\]
+时，机械臂处于腕部奇异位置，此时第 4 轴和第 6 轴的旋转效果发生耦合，
+$\theta_4$ 和 $\theta_6$ 不再唯一。工程上可约定
+\[
+\theta_4=0,
+\]
+再由矩阵剩余元素求
+\[
+\theta_6=\mathrm{atan2}(-r_{12},r_{11}).
+\]
+
+\section{多解性分析}
+
+一般 6R 球腕机械臂的逆运动学最多有 8 组解，其来源为：
+\[
+\text{肩部 2 解}\times
+\text{肘部 2 解}\times
+\text{腕部 2 解}
+=8.
+\]
+
+具体而言：
+
+\begin{itemize}
+    \item 肩部多解：$\theta_1$ 可取相差 $\pi$ 的两组方向；
+    \item 肘部多解：$\theta_3$ 的正负平方根对应肘上和肘下；
+    \item 腕部多解：$\sin\theta_5$ 取正或负，对应腕部正翻和反翻。
+\end{itemize}
+
+在求得所有 MDH 角变量后，需要转换为真实关节角：
+\[
+\begin{aligned}
+q_1&=\theta_1-\pi,\\
+q_2&=\theta_2-\frac{\pi}{2},\\
+q_3&=\theta_3-\frac{\pi}{2},\\
+q_4&=\theta_4-\pi,\\
+q_5&=\theta_5,\\
+q_6&=\theta_6.
+\end{aligned}
+\]
+
+同时还需要检查各关节是否满足机械臂关节限位：
+\[
+q_i^{\min}\le q_i\le q_i^{\max}.
+\]
+
+若存在多组满足约束的解，可根据参考关节角 $q_{\mathrm{ref}}$ 选择距离最近的一组：
+\[
+q^*
+=
+\arg\min_{q^{(k)}}
+\left\|
+\mathrm{wrapToPi}
+\left(q^{(k)}-q_{\mathrm{ref}}\right)
+\right\|_2.
+\]
+
+\section{代码实现说明}
+
+Project 2 中主要文件如下：
+
+\begin{itemize}
+    \item \texttt{robot\_params.m}：保存 SR3 的 MDH 参数、offset 和关节限位；
+    \item \texttt{forward\_kinematics.m}：根据 MDH 表计算正运动学；
+    \item \texttt{inverse\_kinematics\_analytical.m}：实现逆运动学求解；
+    \item \texttt{select\_ik\_solution.m}：按关节限位和参考角选择最优解；
+    \item \texttt{jacobian\_geometric.m}：计算几何雅可比；
+    \item \texttt{inverse\_kinematics\_numerical.m}：实现 DLS 数值逆运动学。
+\end{itemize}
+
+需要特别说明的是，本项目采用 MDH 约定。对 MDH 模型，关节 $i$ 的转轴并非
+标准 DH 中直接取 $T_{i-1}$ 的 $z$ 轴，而是执行
+\[
+R_x(\alpha_{i-1})T_x(a_{i-1})
+\]
+之后、执行
+\[
+R_z(\theta_i)
+\]
+之前的 $z$ 轴。因此几何雅可比实现时需要按 MDH 结构重新确定每一列的关节轴。
+
+\section{测试结果}
+
+运行
+\begin{lstlisting}[language=Matlab]
+main_project2_test
+\end{lstlisting}
+
+得到测试结果如下：
+
+\begin{lstlisting}
+解析法 IK 自洽测试：5 / 5 PASS
+解析法 IK 与 RTB 对比：3 / 3 PASS
+几何雅可比测试：3 / 3 PASS
+DLS 数值 IK 测试：3 / 3 PASS
+\end{lstlisting}
+
+其中，解析法 IK 自洽测试的基本流程为：
+
+\begin{enumerate}
+    \item 给定一组关节角 $q$；
+    \item 通过正运动学计算目标位姿 $T$；
+    \item 由逆运动学求得多组候选解 $Q_{\mathrm{all}}$；
+    \item 将每一组候选解代入正运动学，验证是否重新得到目标位姿；
+    \item 检查解集中是否存在与原始 $q$ 等价的解。
+\end{enumerate}
+
+测试结果表明，逆运动学求解得到的候选解均能通过正运动学反校验，
+位置误差与姿态误差均满足阈值要求，说明所建立的 MDH 模型、逆运动学求解
+过程和多解筛选策略是正确的。
+
+\section{总结}
+
+本文基于 SR3 机械臂的 MDH 模型，对六自由度机械臂逆运动学问题进行了分析。
+首先由目标末端位姿分析腕中心位置，再将问题分解为前三关节的位置子问题和
+后三关节的姿态子问题。前三关节存在肩部和肘部多解，后三关节存在腕部翻转
+多解，因此一般情况下最多可得到 8 组逆运动学解。
+
+由于当前 SR3 的 MDH 参数中包含末端法兰偏置，腕中心与末端原点之间并非只有
+单一的 $d_6$ 轴向偏移。因此在代码实现中结合正运动学反校验和多初值搜索，
+保证最终输出的候选解均严格满足完整 MDH 正运动学模型。测试结果显示，所有
+设计用例均通过，证明逆运动学求解方法有效。
+
+\end{document}

@@ -33,16 +33,30 @@ function [q_best, idx] = select_ik_solution(Q_all, q_ref, params)
     end
     q_ref = q_ref(:)';
 
-    N = size(Q_all, 1);
+    % 先按关节限位过滤，再从可行解中选择离参考关节角最近的一组。
+    % 角度差按 2*pi 周期折算，避免 q 与 q+2*pi 被误判为距离很远。
+    feasible = true(size(Q_all, 1), 1);
+    if isfield(params, 'qlim') && ~isempty(params.qlim)
+        tol = 1e-9;
+        feasible = all(Q_all >= (params.qlim(:, 1)' - tol) & ...
+                       Q_all <= (params.qlim(:, 2)' + tol), 2);
+    end
 
-    % -----------------------------------------------------------------
-    % 【填空】 实现你设计的选解方案
-    %
-    % 下方为方便代码先跑通，默认返回第一组解。
-    % 请将其替换为你在报告中说明的选解逻辑，并把 idx 设为该解在
-    % Q_all 中的行号。
-    % -----------------------------------------------------------------
+    candidate_idx = find(feasible);
+    if isempty(candidate_idx)
+        candidate_idx = (1:size(Q_all, 1))';
+    end
 
-    idx = 1;                  % TODO
-    q_best = Q_all(idx, :);   % TODO
+    diffs = wrap_to_pi(Q_all(candidate_idx, :) - q_ref);
+    dists = vecnorm(diffs, 2, 2);
+    [~, local_idx] = min(dists);
+
+    idx = candidate_idx(local_idx);
+    q_best = Q_all(idx, :);
+end
+
+
+function w = wrap_to_pi(x)
+%WRAP_TO_PI 把角度差折算到 [-pi, pi]。
+    w = mod(x + pi, 2*pi) - pi;
 end

@@ -75,7 +75,8 @@ function [q, info] = inverse_kinematics_numerical(T_target, q0, params, opts)
         %     - 期望维度：dq 为 n×1 列向量 (这里 n = 6)
         % -----------------------------------------------------------------
         I6 = eye(6);
-        dq = NaN(params.n, 1);   % TODO 1
+        A = J * J' + (opts.lambda^2) * I6;
+        dq = J' * (A \ e);
 
         if any(~isfinite(dq))
             error('数值 IK 失败：TODO 1 (DLS 增量) 尚未完成。');
@@ -86,7 +87,7 @@ function [q, info] = inverse_kinematics_numerical(T_target, q0, params, opts)
         %   提示：q 在本函数内是 1×n 行向量，dq 是 n×1 列向量，
         %         注意维度匹配 (q + dq' 或 q + reshape(dq,1,[]))。
         % -----------------------------------------------------------------
-        q_new = NaN(1, params.n);   % TODO 2：写出 q + dq 的更新
+        q_new = q + dq(:)';
 
         if any(~isfinite(q_new))
             error('数值 IK 失败：TODO 2 (q 更新) 尚未完成。');

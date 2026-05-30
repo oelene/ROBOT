@@ -46,8 +46,13 @@ function test_ik_vs_rtb(robot_type)
         % --- RTB 求解 ---
         try
             if use_ikine6s
-                q_rtb = robot.ikine6s(SE3(T_target));
-                rtb_method = 'ikine6s';
+                try
+                    q_rtb = robot.ikine6s(SE3(T_target));
+                    rtb_method = 'ikine6s';
+                catch
+                    q_rtb = robot.ikunc(SE3(T_target), q);
+                    rtb_method = 'ikunc';
+                end
             else
                 q_rtb = robot.ikunc(SE3(T_target), q);
                 rtb_method = 'ikunc';

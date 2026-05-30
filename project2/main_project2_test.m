@@ -14,7 +14,7 @@ close all;
 % 与本项目所有 .m 文件放在同一个文件夹下 (Matlab 当前工作目录)。
 
 % 选择机械臂型号：'CR7' 或 'SR3'
-robot_type = 'CR7';
+robot_type = 'SR3';
 
 fprintf('=========================================\n');
 fprintf(' Project 2：机械臂逆运动学求解与验证\n');
