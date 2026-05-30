@@ -39,12 +39,14 @@ function params = robot_params(robot_type)
             params.name = 'SR3';
             params.n = 6;
 
-            % TODO:
-            % 根据 SR3 的结构图和参数表，填写以下 MDH/几何参数。
-            % ！！！！下方数值仅为占位示例，不代表真实机械臂参数。
+            % SR3 MDH 参数。
+            % 本项目采用 RTB modified DH 约定：
+            % 每一行参数为 [a_{i-1}, alpha_{i-1}, d_i, theta_i]。
+            % offset 只用于电机零位与建模零位不一致的情况。
+            % 这里令 q = 0 对应 RTB 显示中的竖直向上初始姿态。
             params.a      = [0, 0, 290, 0, 0, 136];
             params.alpha  = [0, pi/2, pi, pi/2, -pi/2, pi/2];
-            params.d      = [344, 0, 0, 290, 0, 0];
+            params.d      = [344, 0, 0, 290, 0, 103.5];
             params.offset = [pi, pi/2, pi/2, pi, 0, 0];
 
             params.qlim = [
@@ -55,7 +57,6 @@ function params = robot_params(robot_type)
                 -120*pi/180, 120*pi/180;
                 -2*pi, 2*pi
             ];
-
         otherwise
             error('不支持的机械臂型号，请选择 ''CR7'' 或 ''SR3''。');
     end

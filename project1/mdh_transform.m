@@ -10,12 +10,9 @@ function T = mdh_transform(a, alpha, d, theta)
 %       T : 4×4 齐次变换矩阵
 %
 %   说明：
-%   学生需要根据自己在报告中采用的 MDH 公式完成该矩阵。
+%   本函数采用改进 DH（Modified DH / MDH）：
+%       A_i = Rx(alpha_{i-1}) * Tx(a_{i-1}) * Rz(theta_i) * Tz(d_i)
 %   必须保证报告中的公式推导与这里的代码表达一致。
-
-    % TODO:
-    % 根据课程中采用的 MDH 公式补全齐次变换矩阵。
-    % 下方给出的是一种常见写法，请大家自行核对是否与自己的定义一致。
 
     ct = cos(theta);
     st = sin(theta);

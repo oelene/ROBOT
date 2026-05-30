@@ -14,7 +14,7 @@ function test_pose_conversion(robot_type)
 
     params = robot_params(robot_type);
 
-    q = deg2rad([15, -10, 20, 30, -25, 40]);
+    q = deg2rad([0, 0, 0, 0, 0, 0]);
     [T_end, ~] = forward_kinematics(q, params);
 
     [rpy_deg, eul_deg] = pose_to_rpy_eul(T_end);

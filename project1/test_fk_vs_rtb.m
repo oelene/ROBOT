@@ -47,9 +47,12 @@ function test_fk_vs_rtb(robot_type)
     fprintf('\n位置误差范数 = %.6f\n', pos_err);
     fprintf('姿态误差 Frobenius 范数 = %.6f\n', rot_err);
 
-    % 可选：可视化显示 RTB 模型
+    % 可视化显示 RTB 零位模型。
+    % 上面的 q 用于 FK 数值验证；这里单独画 q_zero，避免把测试姿态
+    % 误认为机械臂初始姿态。
+    q_zero = zeros(1, params.n);
     figure('Name', ['RTB 机械臂模型 - ', params.name]);
-    robot.plot(q);
+    robot.plot(q_zero);
 
 
     fprintf('========== 对比测试结束 ==========\n');
