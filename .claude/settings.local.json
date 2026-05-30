@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.google.com)",
+      "WebFetch(domain:scholar.google.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.rokae.com)",
+      "WebFetch(domain:www.baidu.com)",
+      "WebFetch(domain:ieeexplore.ieee.org)",
+      "WebFetch(domain:www.researchgate.net)",
+      "WebFetch(domain:kns.cnki.net)",
+      "WebFetch(domain:rosindustrial.org)",
+      "WebFetch(domain:robotiq.com)",
+      "WebFetch(domain:www.doublerobotics.com)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "Bash(curl -s -L \"https://www.rokae.com/en/ProductInfo/7.html\")",
+      "Bash(curl -s -L \"https://raw.githubusercontent.com/ROKAE/xmate_robot/refs/heads/master/xmate_description/urdf/xmate3.urdf\")",
+      "Bash(curl -s -L \"https://www.rokae.com/en\")",
+      "Bash(curl -s -L \"https://api.github.com/search/repositories?q=rokae+xmate+urdf\")",
+      "Bash(curl -s -L \"https://api.github.com/search/repositories?q=xmate+robot+description\")",
+      "Bash(curl -s -L \"https://www.rokae.com/en/product/show/349/SR-Cobots.html\")",
+      "Bash(curl -s -L \"https://api.github.com/search/repositories?q=xmate+ros-industrial\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(r['html_url'],r.get\\('description',''\\)\\) for r in d.get\\('items',[]\\)]\")",
+      "PowerShell($result = Invoke-RestMethod -Uri \"https://api.github.com/search/repositories?q=xmate+robot+urdf+ros\" -UseBasicParsing; $result.items | ForEach-Object { \"$\\($_.html_url\\) - $\\($_.description\\)\" })",
+      "PowerShell($result = Invoke-RestMethod -Uri \"https://api.github.com/search/repositories?q=rokae+ros+industrial\" -UseBasicParsing; $result.items | ForEach-Object { \"$\\($_.html_url\\) - $\\($_.description\\)\" })",
+      "PowerShell($result = Invoke-RestMethod -Uri \"https://api.github.com/search/repositories?q=rokae+urdf\" -UseBasicParsing; $result.items | ForEach-Object { \"$\\($_.html_url\\) - $\\($_.description\\) - stars: $\\($_.stargazers_count\\)\" })"
+    ]
+  }
+}
