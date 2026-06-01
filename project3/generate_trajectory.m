@@ -37,10 +37,64 @@ function traj = generate_trajectory(path, scene, params)
     K = round(scene.T_total / scene.dt) + 1;
     n = params.n;
 
-    traj.t   = NaN(1, K);   % TODO
-    traj.q   = NaN(K, n);   % TODO
-    traj.qd  = NaN(K, n);   % TODO
-    traj.qdd = NaN(K, n);   % TODO
+    if size(path, 2) ~= n || size(path, 1) < 2
+        error('轨迹生成失败：path 维度应为 M×params.n，且 M >= 2。');
+    end
+
+    traj.t = linspace(0, scene.T_total, K);
+
+    % 用五次多项式时间缩放 s(t)，沿 path 的关节空间弧长前进。
+    tau = traj.t / scene.T_total;
+    s   = 10*tau.^3 - 15*tau.^4 + 6*tau.^5;
+
+    ds_dt   = (30*tau.^2 - 60*tau.^3 + 30*tau.^4) / scene.T_total;
+    d2s_dt2 = (60*tau - 180*tau.^2 + 120*tau.^3) / (scene.T_total^2);
+
+    seg_vec = diff(path, 1, 1);
+    seg_len = sqrt(sum(seg_vec.^2, 2));
+    keep = [true; seg_len > 1e-12];
+    path = path(keep, :);
+    seg_vec = diff(path, 1, 1);
+    seg_len = sqrt(sum(seg_vec.^2, 2));
+
+    if isempty(seg_len) || sum(seg_len) < 1e-12
+        traj.q   = repmat(path(1, :), K, 1);
+        traj.qd  = zeros(K, n);
+        traj.qdd = zeros(K, n);
+    else
+        u_node = [0; cumsum(seg_len) / sum(seg_len)];
+        u = s(:);
+
+        traj.q   = zeros(K, n);
+        traj.qd  = zeros(K, n);
+        traj.qdd = zeros(K, n);
+
+        for k = 1:K
+            if u(k) >= 1
+                idx = numel(seg_len);
+                local = 1;
+            else
+                idx = find(u(k) >= u_node(1:end-1) & u(k) <= u_node(2:end), 1, 'first');
+                if isempty(idx)
+                    idx = 1;
+                end
+                denom = u_node(idx+1) - u_node(idx);
+                local = (u(k) - u_node(idx)) / denom;
+            end
+
+            dq_du = seg_vec(idx, :) / (u_node(idx+1) - u_node(idx));
+            traj.q(k, :)   = path(idx, :) + local * seg_vec(idx, :);
+            traj.qd(k, :)  = dq_du * ds_dt(k);
+            traj.qdd(k, :) = dq_du * d2s_dt2(k);
+        end
+
+        traj.q(1, :)     = path(1, :);
+        traj.q(end, :)   = path(end, :);
+        traj.qd(1, :)    = 0;
+        traj.qd(end, :)  = 0;
+        traj.qdd(1, :)   = 0;
+        traj.qdd(end, :) = 0;
+    end
 
     if any(~isfinite(traj.t)) || any(~isfinite(traj.q(:))) ...
        || any(~isfinite(traj.qd(:))) || any(~isfinite(traj.qdd(:)))

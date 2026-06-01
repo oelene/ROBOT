@@ -15,7 +15,7 @@ close all;
 % Project 1/2 文件与本项目所有 .m 文件放在同一个 Matlab 当前
 % 工作目录下（或一起 addpath）。
 
-robot_type = 'CR7';
+robot_type = 'SR3';
 scene_name = 'easy';
 sim_mode   = 'kinematic';
 
