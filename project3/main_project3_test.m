@@ -19,6 +19,10 @@ robot_type = 'SR3';
 scene_name = 'easy';
 sim_mode   = 'kinematic';
 
+% 是否在基础测试结束后额外展示几个绕障动画。
+show_extra_visual_cases = true;
+extra_visual_cases = {'single_sphere_sweep_center', 'three_spheres_sweep'};
+
 fprintf('=========================================\n');
 fprintf(' Project 3：路径规划 + 轨迹生成 + 跟踪\n');
 fprintf(' 机械臂型号：%s  场景：%s  仿真模式：%s\n', ...
@@ -33,5 +37,10 @@ test_trajectory(robot_type, scene_name);
 
 % 测试 3：端到端跟踪（含 RTB 动画展示）
 test_tracking(robot_type, scene_name, sim_mode);
+
+% 额外可视化：展示更多路径规划/避障动作
+if show_extra_visual_cases
+    visualize_extra_path_cases(robot_type, extra_visual_cases, sim_mode);
+end
 
 fprintf('\n全部测试完成。\n');

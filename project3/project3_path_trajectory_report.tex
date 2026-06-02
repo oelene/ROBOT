@@ -273,6 +273,25 @@ hard & 轨迹生成 & 6/6 通过 & 满足轨迹平滑性测试 \\
 \end{tabular}
 \end{table}
 
+此外，为了进一步检查规划器在不同障碍布局下的泛化能力，额外编写了
+\nolinkurl{test_extra_path_cases.m}。该测试构造 5 个 SR3 自定义场景，包括无障碍基线、单球阻挡直线路径以及三球连续阻挡路径。测试结果如下：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+自定义场景 & 直线路径 & 规划结果 & 说明 \\
+\midrule
+baseline & 可行 & 通过 & 返回 2 个路点 \\
+high single & 不可行 & 通过 & 返回 3 个路点绕障 \\
+sweep single & 不可行 & 通过 & 返回 3 个路点绕障 \\
+diagonal single & 不可行 & 通过 & 返回 3 个路点绕障 \\
+three spheres & 不可行 & 通过 & 返回 4 个路点绕过多球障碍 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \section{总结}
 
 本项目采用关节空间规划方式，避免了直接在任务空间规划时需要频繁求逆运动学的问题。路径规划部分通过直线检测和双向 RRT 结合，在简单场景下能够快速得到最短形式路径，在复杂场景下也可以通过随机采样搜索绕过障碍。碰撞检测使用整条机械臂连杆与球形障碍的距离判断，比只检查末端位置更可靠。

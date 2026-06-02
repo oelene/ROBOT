@@ -62,6 +62,12 @@ function path = plan_path(scene, params)
         path = plan_with_birrt(q_start, q_goal, scene, params, qlim, edge_samples);
     end
 
+    if norm(path(1, :) - q_start) > norm(path(end, :) - q_start)
+        path = flipud(path);
+    end
+    path(1, :) = q_start;
+    path(end, :) = q_goal;
+
     if any(~isfinite(path(:)))
         error('路径规划失败：plan_path.m 中的 TODO 尚未完成。');
     end

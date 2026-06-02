@@ -10,6 +10,8 @@
 
 三个环节展开。本项目以 Project 1（FK）与 Project 2（IK / 雅可比）的代码为基础。
 
+当前默认机械臂型号为 **SR3**。SR3 参数来自 Project 1 / Project 2 中的 `robot_params.m`。
+
 **运行前请把 Project 1 与 Project 2 中已经填好 TODO 的 `.m` 文件，与本项目所有 `.m` 文件放在同一个文件夹下（作为 Matlab 当前工作目录）**，否则将无法调用 `robot_params`、`forward_kinematics`、`build_rtb_robot` 等函数。
 
 ---
@@ -32,13 +34,16 @@ project3/
 ├── main_project3_test.m       入口（已写好）
 ├── scene_easy.m               场景：简单（已写好）
 ├── scene_hard.m               场景：困难（已写好）
-├── plan_path.m                ★ 学生填：路径规划
-├── generate_trajectory.m      ★ 学生填：轨迹生成
+├── plan_path.m                已完成：路径规划
+├── generate_trajectory.m      已完成：轨迹生成
 ├── pd_controller.m            已写好：关节空间 PD 控制器
 ├── simulate_tracking.m        已写好：跟踪仿真主循环（含 RTB 动画）
 ├── test_path_planning.m       已写好：路径合法性测试
 ├── test_trajectory.m          已写好：轨迹平滑性测试
-└── test_tracking.m            已写好：端到端跟踪测试
+├── test_tracking.m            已写好：端到端跟踪测试
+├── extra_path_scenes.m        额外 SR3 避障场景
+├── test_extra_path_cases.m    额外路径规划测试
+└── visualize_extra_path_cases.m 额外绕障动画展示
 ```
 
 依赖（来自 Project 1 / Project 2）：
@@ -97,18 +102,73 @@ select_ik_solution.m
 
 ---
 
-## 五、需要完成的TODO
+## 五、当前实现
 
-| 文件 | TODO 数 | 简述 |
-|---|---|---|
-| `plan_path.m`           | 1（开放） | 任意符合接口契约的路径规划算法 |
-| `generate_trajectory.m` | 4（开放） | 任意符合接口契约的时间参数化方法 |
+### 路径规划
 
-未填的 TODO 处变量初始化为 `NaN`，运行测试时会自动报错并提示具体哪一处尚未完成。
+`plan_path.m` 采用关节空间规划：
+
+1. 先检查 `q_start` 到 `q_goal` 的关节空间直线插值是否满足避障要求；
+2. 若直线路径不可行，则使用带目标偏置的双向 RRT 搜索可行路径；
+3. 找到路径后进行 shortcut 简化，减少不必要的中间路点；
+4. 碰撞检测使用全臂连杆线段与球形障碍物的距离判断，不只检查末端。
+
+### 轨迹生成
+
+`generate_trajectory.m` 使用基于路径弧长的五次多项式时间缩放：
+
+```matlab
+s(t) = 10*tau^3 - 15*tau^4 + 6*tau^5
+```
+
+其中 `tau = t / T_total`。该方法保证轨迹首末位置匹配路径端点，且首末速度、加速度均为 0。
 
 ---
 
-## 六、判分依据
+## 六、额外测试与可视化
+
+除了老师提供的 easy / hard 场景，本项目额外加入 5 个 SR3 测试场景：
+
+| 场景 | 说明 |
+|---|---|
+| `baseline_no_obstacle` | 无障碍基线 |
+| `single_sphere_high_workspace` | 高位单球挡住直线路径 |
+| `single_sphere_sweep_center` | 扫掠动作中间单球挡路 |
+| `single_sphere_diagonal_motion` | 斜向运动单球挡路 |
+| `three_spheres_sweep` | 三球连续挡路 |
+
+运行额外测试：
+
+```matlab
+test_extra_path_cases('SR3')
+```
+
+运行额外绕障动画：
+
+```matlab
+visualize_extra_path_cases('SR3')
+```
+
+`main_project3_test.m` 默认会在基础测试结束后额外展示两个绕障动画。如需关闭，可修改：
+
+```matlab
+show_extra_visual_cases = false;
+```
+
+---
+
+## 七、原始 TODO 对照
+
+| 文件 | TODO 数 | 简述 |
+|---|---|---|
+| `plan_path.m`           | 已完成 | 直线检测 + 双向 RRT + shortcut |
+| `generate_trajectory.m` | 已完成 | 五次多项式时间缩放 |
+
+原框架中未填 TODO 会返回 `NaN`，当前版本已完成相关实现。
+
+---
+
+## 八、判分依据
 
 每个测试函数都会逐用例打印 `[PASS]` 或 `[FAIL]`，并在末尾汇总通过用例数。
 
@@ -120,7 +180,7 @@ select_ik_solution.m
 
 ---
 
-## 七、运行方法
+## 九、运行方法
 
 ### 1. 环境要求
 
@@ -139,14 +199,14 @@ main_project3_test
 如需切换机械臂型号、场景或仿真模式，请修改 `main_project3_test.m` 顶部的：
 
 ```matlab
-robot_type = 'CR7';
+robot_type = 'SR3';
 scene_name = 'easy';
 sim_mode   = 'kinematic';
 ```
 
 ---
 
-## 八、与 Project 1 / Project 2 的衔接
+## 十、与 Project 1 / Project 2 的衔接
 
 - **来自 Project 1**：MDH 建模、`forward_kinematics`、RTB 模型构建。
 - **来自 Project 2**：`inverse_kinematics_analytical`（若在路径规划中调用任务空间→关节空间转换时使用）、`jacobian_geometric`、`select_ik_solution`。
