@@ -1,0 +1,301 @@
+\documentclass[UTF8,a4paper,12pt]{ctexart}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{teal},
+    breaklines=true,
+    frame=single,
+    columns=fullflexible
+}
+
+\title{Project 3 路径规划与轨迹生成说明}
+\author{机器人课程设计}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{项目目标}
+
+本项目基于前两个阶段已经完成的 SR3 机械臂建模、正运动学和逆运动学函数，完成关节空间路径规划、轨迹生成以及关节空间跟踪仿真。给定场景中包含起始关节角、目标关节角以及若干球形障碍物，算法需要从起点运动到终点，同时保证机械臂各连杆在采样检查下不与障碍物发生碰撞。
+
+本项目主要完成两个函数：
+
+\begin{itemize}
+    \item \texttt{plan\_path(scene, params)}：生成满足关节限位与避障要求的关节空间路径；
+    \item \texttt{generate\_trajectory(path, scene, params)}：将离散路径点扩展为满足边界条件的连续时间轨迹。
+\end{itemize}
+
+本组采用的机械臂型号为 SR3，参数来自 Project 1 与 Project 2 中的 \texttt{robot\_params.m}。
+
+\section{路径规划方法}
+
+\subsection{规划空间}
+
+路径规划在关节空间中完成。设 SR3 机械臂有 $n=6$ 个关节，关节变量为
+\[
+    \mathbf{q} = [q_1,q_2,q_3,q_4,q_5,q_6].
+\]
+规划器输入起点 $\mathbf{q}_{start}$ 和终点 $\mathbf{q}_{goal}$，输出离散路点矩阵
+\[
+    P =
+    \begin{bmatrix}
+    \mathbf{q}_1 \\
+    \mathbf{q}_2 \\
+    \cdots \\
+    \mathbf{q}_M
+    \end{bmatrix},
+\]
+其中 $\mathbf{q}_1=\mathbf{q}_{start}$，$\mathbf{q}_M=\mathbf{q}_{goal}$。
+
+每个路点均需要满足关节限位：
+\[
+    q_{i,\min} \le q_i \le q_{i,\max}, \quad i=1,2,\ldots,6.
+\]
+
+\subsection{碰撞检测}
+
+虽然路径在关节空间中规划，但碰撞检测在任务空间中完成。对每个候选关节角 $\mathbf{q}$，调用正运动学函数 \texttt{forward\_kinematics} 得到各关节坐标系原点：
+\[
+    \mathbf{p}_0,\mathbf{p}_1,\ldots,\mathbf{p}_6.
+\]
+机械臂连杆近似为相邻关节点之间的线段：
+\[
+    \overline{\mathbf{p}_{j-1}\mathbf{p}_{j}}, \quad j=1,2,\ldots,6.
+\]
+
+场景中的障碍物为球：
+\[
+    O_k = (\mathbf{c}_k, r_k),
+\]
+其中 $\mathbf{c}_k$ 为球心，$r_k$ 为半径。若连杆线段到球心的最短距离小于球半径，则认为发生碰撞：
+\[
+    d(\overline{\mathbf{p}_{j-1}\mathbf{p}_{j}}, \mathbf{c}_k) < r_k.
+\]
+
+线段到点的距离通过投影计算。设线段端点为 $\mathbf{A}$、$\mathbf{B}$，球心为 $\mathbf{C}$，则
+\[
+    t = \mathrm{clip}\left(
+    \frac{(\mathbf{C}-\mathbf{A})^\mathrm{T}(\mathbf{B}-\mathbf{A})}
+    {\|\mathbf{B}-\mathbf{A}\|^2}, 0, 1
+    \right),
+\]
+\[
+    \mathbf{P} = \mathbf{A} + t(\mathbf{B}-\mathbf{A}),
+    \qquad
+    d = \|\mathbf{P}-\mathbf{C}\|.
+\]
+
+对路径中相邻路点之间的关节空间线段，算法还会进行离散采样检查，避免只检查端点而漏掉中间碰撞。
+
+\subsection{规划算法}
+
+本项目采用“直线检测 + 双向 RRT”的组合方法。
+
+首先检测 $\mathbf{q}_{start}$ 到 $\mathbf{q}_{goal}$ 的关节空间直线插值是否无碰撞。若直线路径可行，则直接返回两个路点：
+\[
+    P = [\mathbf{q}_{start}; \mathbf{q}_{goal}].
+\]
+
+若直线路径不可行，则使用双向快速随机树（Bidirectional RRT, BiRRT）进行搜索。算法分别从起点和终点建立两棵树 $T_a$ 与 $T_b$，每轮随机采样一个关节构型 $\mathbf{q}_{rand}$，从一棵树中选取最近节点 $\mathbf{q}_{near}$，按照固定步长向采样点扩展：
+\[
+    \mathbf{q}_{new}
+    =
+    \mathbf{q}_{near}
+    +
+    \Delta q
+    \frac{\mathbf{q}_{rand}-\mathbf{q}_{near}}
+    {\|\mathbf{q}_{rand}-\mathbf{q}_{near}\|}.
+\]
+如果 $\mathbf{q}_{new}$ 合法，并且 $\mathbf{q}_{near}$ 到 $\mathbf{q}_{new}$ 的边无碰撞，则加入搜索树。随后另一棵树尝试向 $\mathbf{q}_{new}$ 连接。若两棵树成功连接，则从两棵树中回溯父节点，拼接得到完整路径。
+
+为提高搜索效率，程序使用了目标偏置采样：每隔若干次迭代直接采样目标点，使搜索树更倾向于向终点方向生长。此外，在找到初始路径后进行 shortcut 简化，即尝试用更长的无碰撞边替换若干中间路点，从而减少路径点数量并改善运动平滑性。
+
+\subsection{关键参数}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+参数 & 数值/策略 & 作用 \\
+\midrule
+最大迭代次数 & 6000 & 限制 RRT 搜索时间 \\
+扩展步长 & $0.12 \sim 0.35$ rad 自适应 & 控制树的增长粒度 \\
+边采样点数 & 25 & 检查相邻路点之间是否碰撞 \\
+目标偏置 & 每 5 次采样一次目标点 & 提高连接终点的概率 \\
+随机种子 & 固定为 3 & 保证测试结果可复现 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{轨迹生成方法}
+
+\subsection{时间序列}
+
+轨迹生成函数根据场景给定的总时间 $T$ 和采样周期 $\Delta t$ 构造等间隔时间序列：
+\[
+    K = \mathrm{round}\left(\frac{T}{\Delta t}\right) + 1,
+\]
+\[
+    t_k = (k-1)\Delta t, \quad k=1,2,\ldots,K.
+\]
+程序保证 $t_1=0$，$t_K=T$。
+
+\subsection{路径弧长参数化}
+
+设路径点为 $\mathbf{q}_1,\mathbf{q}_2,\ldots,\mathbf{q}_M$。相邻路径点之间的关节空间距离为
+\[
+    l_i = \|\mathbf{q}_{i+1}-\mathbf{q}_i\|, \quad i=1,2,\ldots,M-1.
+\]
+总长度为
+\[
+    L = \sum_{i=1}^{M-1} l_i.
+\]
+将每个路点对应到归一化路径参数 $u \in [0,1]$：
+\[
+    u_1=0,\qquad
+    u_i = \frac{\sum_{j=1}^{i-1} l_j}{L}.
+\]
+
+\subsection{五次多项式时间缩放}
+
+为保证首末速度和加速度均为 0，采用五次多项式时间缩放：
+\[
+    \tau = \frac{t}{T},
+\]
+\[
+    s(\tau)=10\tau^3-15\tau^4+6\tau^5.
+\]
+该函数满足
+\[
+    s(0)=0,\quad s(1)=1,
+\]
+\[
+    \dot{s}(0)=\dot{s}(1)=0,
+    \qquad
+    \ddot{s}(0)=\ddot{s}(1)=0.
+\]
+
+其一阶和二阶导数为
+\[
+    \dot{s}(t)
+    =
+    \frac{30\tau^2-60\tau^3+30\tau^4}{T},
+\]
+\[
+    \ddot{s}(t)
+    =
+    \frac{60\tau-180\tau^2+120\tau^3}{T^2}.
+\]
+
+在每个采样时刻，根据 $u=s(t)$ 找到对应的路径段，并在该段内进行线性插值：
+\[
+    \mathbf{q}(t)
+    =
+    \mathbf{q}_i
+    +
+    \lambda
+    (\mathbf{q}_{i+1}-\mathbf{q}_i),
+\]
+其中
+\[
+    \lambda = \frac{u-u_i}{u_{i+1}-u_i}.
+\]
+
+速度和加速度由链式法则得到：
+\[
+    \dot{\mathbf{q}}(t)
+    =
+    \frac{d\mathbf{q}}{du}\dot{s}(t),
+\]
+\[
+    \ddot{\mathbf{q}}(t)
+    =
+    \frac{d\mathbf{q}}{du}\ddot{s}(t).
+\]
+
+由于 $s(t)$ 的首末导数为 0，因此生成轨迹满足
+\[
+    \dot{\mathbf{q}}(0)=\dot{\mathbf{q}}(T)=0,
+    \qquad
+    \ddot{\mathbf{q}}(0)=\ddot{\mathbf{q}}(T)=0.
+\]
+
+\section{接口输出}
+
+轨迹结构体 \texttt{traj} 包含四个字段：
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+字段 & 维度 & 含义 \\
+\midrule
+\texttt{traj.t} & $1 \times K$ & 时间序列 \\
+\texttt{traj.q} & $K \times 6$ & 关节位置 \\
+\texttt{traj.qd} & $K \times 6$ & 关节速度 \\
+\texttt{traj.qdd} & $K \times 6$ & 关节加速度 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+其中位置首末点与路径首末点严格一致，速度和加速度在首末时刻均为 0。
+
+\section{测试结果}
+
+在 SR3 机械臂参数下，运行 Project 3 测试程序，结果如下：
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llll}
+\toprule
+场景 & 测试项 & 结果 & 说明 \\
+\midrule
+easy & 路径规划 & 5/5 通过 & 维度、端点、限位、避障均满足 \\
+easy & 轨迹生成 & 6/6 通过 & 时间、端点、速度、加速度、差分一致性满足 \\
+easy & 运动学跟踪 & 1/1 通过 & 最大末端误差为 0 \\
+hard & 路径规划 & 5/5 通过 & 采样检查下全臂无碰撞 \\
+hard & 轨迹生成 & 6/6 通过 & 满足轨迹平滑性测试 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+此外，为了进一步检查规划器在不同障碍布局下的泛化能力，额外编写了
+\nolinkurl{test_extra_path_cases.m}。该测试构造 5 个 SR3 自定义场景，包括无障碍基线、单球阻挡直线路径以及三球连续阻挡路径。测试结果如下：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+自定义场景 & 直线路径 & 规划结果 & 说明 \\
+\midrule
+baseline & 可行 & 通过 & 返回 2 个路点 \\
+high single & 不可行 & 通过 & 返回 3 个路点绕障 \\
+sweep single & 不可行 & 通过 & 返回 3 个路点绕障 \\
+diagonal single & 不可行 & 通过 & 返回 3 个路点绕障 \\
+three spheres & 不可行 & 通过 & 返回 4 个路点绕过多球障碍 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{总结}
+
+本项目采用关节空间规划方式，避免了直接在任务空间规划时需要频繁求逆运动学的问题。路径规划部分通过直线检测和双向 RRT 结合，在简单场景下能够快速得到最短形式路径，在复杂场景下也可以通过随机采样搜索绕过障碍。碰撞检测使用整条机械臂连杆与球形障碍的距离判断，比只检查末端位置更可靠。
+
+轨迹生成部分采用基于路径弧长的五次多项式时间缩放。该方法实现简单，能够保证轨迹首末位置、速度和加速度满足课程测试要求，并且与后续 PD 跟踪仿真接口兼容。
+
+\end{document}
