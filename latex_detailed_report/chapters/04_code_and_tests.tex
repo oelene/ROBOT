@@ -1,0 +1,248 @@
+\chapter{代码阅读、测试判据与答辩准备}
+
+\section{项目二逐文件阅读顺序}
+
+\begin{enumerate}
+  \item \code{robot\_params.m}：先确认机器人有几轴、尺寸、偏置和限位。
+  \item \code{build\_mdh\_table.m}：理解 $q$ 如何变成 $\theta$。
+  \item \code{mdh\_transform.m}：确认采用 MDH，而不是标准 DH。
+  \item \code{forward\_kinematics.m}：理解六个局部变换如何累计。
+  \item \code{jacobian\_geometric.m}：理解小关节运动如何影响末端。
+  \item \code{inverse\_kinematics\_numerical.m}：理解 DLS 单次迭代。
+  \item \code{inverse\_kinematics\_analytical.m}：理解多初值搜索、校验和去重。
+  \item \code{select\_ik\_solution.m}：理解多解中如何挑一组连续、安全的解。
+\end{enumerate}
+
+\section{项目二核心代码逐句解释}
+
+\subsection{正运动学累计}
+
+\begin{lstlisting}
+T = eye(4);
+for i = 1:params.n
+    A_i = mdh_transform(a_i, alpha_i, d_i, theta_i);
+    T = T * A_i;
+    T_all(:, :, i + 1) = T;
+end
+\end{lstlisting}
+
+\begin{itemize}
+  \item \code{eye(4)} 表示从基坐标系到自身不发生任何变化；
+  \item \code{A\_i} 是第 $i$ 节局部变换；
+  \item 右乘保持坐标变换链的正确顺序；
+  \item 保存 \code{T\_all} 是为了后续使用所有关节位置。
+\end{itemize}
+
+\subsection{MDH 关节轴}
+
+\begin{lstlisting}
+T_pre = T * rotx4(alpha_i) * transl4(a_i, 0, 0);
+z_axis = T_pre(1:3, 3);
+p_axis = T_pre(1:3, 4);
+Jv = cross(z_axis, p_end - p_axis);
+Jw = z_axis;
+\end{lstlisting}
+
+\code{T\_pre} 的含义是“已经做完固定的扭转和平移，但还没有执行当前关节的
+变量旋转”。因此它的 $z$ 轴就是当前转动关节轴。
+
+\subsection{DLS 更新}
+
+\begin{lstlisting}
+ep = T_target(1:3, 4) - T_cur(1:3, 4);
+R_err = T_target(1:3, 1:3) * T_cur(1:3, 1:3)';
+eo = rotm_to_axisangle(R_err);
+e  = [ep; eo];
+
+J = jacobian_geometric(q, params);
+A = J * J' + (opts.lambda^2) * eye(6);
+dq = J' * (A \ e);
+q = q + dq(:)';
+\end{lstlisting}
+
+这段代码每轮完成“测误差、算灵敏度、求修正量、更新猜测”四件事。
+
+\section{项目三逐文件阅读顺序}
+
+\begin{enumerate}
+  \item \code{scene\_easy.m}、\code{scene\_hard.m}：明确输入是什么。
+  \item \code{plan\_path.m} 主函数：先看整体分支。
+  \item \code{is\_collision} 和 \code{seg\_point\_dist}：理解安全判据。
+  \item \code{extend\_tree}、\code{connect\_tree}：理解 BiRRT。
+  \item \code{merge\_trees}、\code{shortcut\_path}：理解路径恢复和简化。
+  \item \code{generate\_trajectory.m}：理解时间缩放和链式法则。
+  \item \code{pd\_controller.m}、\code{simulate\_tracking.m}：理解理想回放与简化
+  动态跟踪的区别。
+\end{enumerate}
+
+\section{项目三核心代码逐句解释}
+
+\subsection{直线优先}
+
+\begin{lstlisting}
+if is_edge_valid(q_start, q_goal, scene, params, qlim, edge_samples)
+    path = [q_start; q_goal];
+else
+    path = plan_with_birrt(...);
+end
+\end{lstlisting}
+
+这里不是“偷懒”，而是合理的分层策略：简单问题直接解决，困难问题才使用搜索。
+
+\subsection{扩展一步}
+
+\begin{lstlisting}
+idx_near = nearest_node(tree.q, q_target);
+q_near = tree.q(idx_near, :);
+q_new = steer(q_near, q_target, step);
+added = is_state_valid(q_new, ...) && ...
+        is_edge_valid(q_near, q_new, ...);
+\end{lstlisting}
+
+新节点必须同时满足“点安全”和“从父节点走到它的整条边安全”。
+
+\subsection{轨迹时间缩放}
+
+\begin{lstlisting}
+tau = traj.t / scene.T_total;
+s = 10*tau.^3 - 15*tau.^4 + 6*tau.^5;
+ds_dt = (30*tau.^2 - 60*tau.^3 + 30*tau.^4) ...
+        / scene.T_total;
+d2s_dt2 = (60*tau - 180*tau.^2 + 120*tau.^3) ...
+          / (scene.T_total^2);
+\end{lstlisting}
+
+\code{.*} 和 \code{.\^} 表示对时间数组逐元素运算。若误写成矩阵乘方
+\code{\^}，MATLAB 会报尺寸错误或得到完全不同的结果。
+
+\section{测试到底在检查什么}
+
+\subsection{IK 自洽测试}
+
+测试不是简单比较 $\q'=\q$，因为逆运动学可以有多解。真正判据是：
+\[
+\mathrm{FK}(\q')\approx\mathrm{FK}(\q),
+\]
+并且解集中至少有一组与原始 $\q$ 周期等价。
+
+\subsection{雅可比中心差分测试}
+
+对第 $i$ 个关节分别加减很小扰动 $h$：
+\[
+\frac{\partial f}{\partial q_i}
+\approx\frac{f(\q+h\boldsymbol{e}_i)-f(\q-h\boldsymbol{e}_i)}{2h}.
+\]
+中心差分误差通常比单边差分小。测试将解析雅可比与数值雅可比的 Frobenius
+范数误差比较。
+
+\subsection{路径测试}
+
+依次检查：
+\begin{enumerate}
+  \item 矩阵尺寸是否为 $M\times6$；
+  \item 第一个点是否等于起点；
+  \item 最后一个点是否等于终点；
+  \item 所有路点是否在关节限位内；
+  \item 每条边插值后，所有连杆是否避开所有球。
+\end{enumerate}
+
+\subsection{轨迹测试}
+
+检查字段尺寸、等间隔时间、端点位置、端点速度、端点加速度，以及
+\[
+\frac{\q_{k+1}-\q_k}{dt}
+\]
+是否与相邻解析速度的平均值基本一致。
+
+\subsection{跟踪测试}
+
+运动学模式直接令实际关节角等于期望关节角，因此理论误差为零。动态模式才会
+产生跟踪误差，需要通过 $K_p,K_d$ 调节。
+
+\section{推荐的实验结果图}
+
+课程题目要求的图建议至少包括：
+\begin{enumerate}
+  \item easy 与 hard 场景三维图：障碍球、起点、终点、中间路点和末端轨迹；
+  \item 六个关节角 $q_i(t)$ 曲线；
+  \item 六个关节速度 $\dot q_i(t)$ 曲线；
+  \item 六个关节加速度 $\ddot q_i(t)$ 曲线；
+  \item 机械臂到最近障碍球面的最小安全距离曲线；
+  \item 动态模式下关节误差或末端位置误差曲线。
+\end{enumerate}
+
+不要凭文字编造数值。应运行当前代码后把真实图和真实测试输出加入最终提交版。
+
+\section{最小安全距离如何计算}
+
+对每个时刻、每个障碍、每根连杆计算线段到球心距离 $d_{j,k}$。球面净空为
+\[
+c_{j,k}=d_{j,k}-r_k.
+\]
+该时刻全机械臂最小安全距离：
+\[
+c_{\min}(t)=\min_{j,k}c_{j,k}(t).
+\]
+若 $c_{\min}>0$，说明有正安全余量；若等于零，刚好接触；若小于零，发生穿透。
+
+\section{常见报错与定位}
+
+\begin{longtable}{p{0.31\textwidth}p{0.60\textwidth}}
+\toprule
+现象 & 优先检查\\
+\midrule
+\endhead
+FK 结果完全不对 & MDH/标准 DH 是否混用，offset 是否漏加，矩阵顺序是否写反\\
+雅可比位置部分错误 & 是否使用了 MDH 正确关节轴，叉乘顺序是否反了\\
+DLS 不收敛 & 初值、阻尼、姿态误差、单位权重、雅可比是否正确\\
+IK 有正确位姿但角度不同 & 多解和 $2\pi$ 周期，不应直接逐元素硬比较\\
+RRT 一直失败 & 起终点是否已碰撞、步长、边采样、障碍是否封死通道\\
+路径端点安全但中间撞球 & 只检查了状态，没有检查边\\
+轨迹速度与差分不一致 & 链式法则、段索引、$u$ 节点归一化是否正确\\
+动态跟踪振荡 & $K_p$ 过大、$K_d$ 过小、Euler 步长过大\\
+\bottomrule
+\end{longtable}
+
+\section{答辩可能提问与简洁回答}
+
+\subsection*{为什么用关节空间 RRT，而不是任务空间直线？}
+关节空间节点天然满足完整六轴构型表达，容易处理关节限位；任务空间路径需要
+频繁求 IK，并可能在不同 IK 分支间跳变。碰撞仍通过 FK 映射到任务空间检查。
+
+\subsection*{为什么用双向 RRT？}
+起点树和终点树同时扩展，通常更快连接，尤其适合已知单一起点和终点的问题。
+
+\subsection*{为什么要 shortcut？}
+RRT 路径受随机采样影响，节点多且绕。shortcut 用无碰撞长边替换若干短边，
+减少路点和路径长度。
+
+\subsection*{为什么五次多项式能保证首末速度、加速度为零？}
+因为它的六个系数正好由位置、速度、加速度的六个首末边界条件唯一确定。
+
+\subsection*{DLS 比普通伪逆好在哪里？}
+加入 $\lambda^2I$ 后，雅可比接近奇异时求解仍较稳定，不容易产生过大的关节
+修正量。
+
+\subsection*{你们的“解析 IK”是真正解析法吗？}
+当前运行代码不是严格闭式解析解，而是多初值 DLS 数值法。报告保留 Pieper
+分离法作为理论学习，并明确说明当前完整 SR3 MDH 模型使用数值反解和 FK 校验。
+
+\section{AI 工具使用声明模板}
+
+本项目在学习、文档组织和代码解释过程中使用了 OpenAI Codex 辅助工具。
+主要用途包括：梳理 MDH、雅可比、DLS、BiRRT 和五次时间缩放的基础原理；
+把仓库中的 MATLAB 函数按调用关系整理为可阅读的说明；检查 LaTeX 公式、结构和
+编译问题。
+
+具体示例包括：
+\begin{enumerate}
+  \item 辅助解释为什么 MDH 下雅可比关节轴应在
+  $\R_x(\alpha)\T_x(a)$ 之后提取；
+  \item 辅助解释 DLS 中阻尼项的数值作用，以及为什么使用 MATLAB
+  反斜杠而不是显式求逆；
+  \item 辅助整理 BiRRT、碰撞检测、shortcut 和五次时间缩放的逐步说明。
+\end{enumerate}
+
+最终提交前，小组成员应自行核对公式与当前代码的一致性，亲自运行测试、生成
+实验图、记录参数与结果，并能够在现场不依赖 AI 独立解释算法和代码。算法选择、
+实际调参、测试结果和答辩内容应由小组成员共同确认。

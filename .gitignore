@@ -11,9 +11,13 @@ sldrt/
 *.log
 *.out
 *.toc
+*.lof
+*.lot
 *.fls
 *.fdb_latexmk
 *.synctex.gz
+*.xdv
+latex_detailed_report/preview/
 
 # OS/editor noise
 .DS_Store

@@ -26,14 +26,20 @@ function tau = pd_controller(q, qd, q_des, qd_des, qdd_ref, params, gains)
 %   按"等效惯性矩阵 = I"折算为关节加速度。如需要扩展到含重力补偿的
 %   计算力矩控制，可在本函数末尾追加 G(q) 项。
 
+    % 所有状态统一成 1×n 行向量，避免输入为列向量时逐元素运算扩维。
     q       = q(:)';
     qd      = qd(:)';
     q_des   = q_des(:)';
     qd_des  = qd_des(:)';
     qdd_ref = qdd_ref(:)';
 
+    % 当前控制器采用逐关节对角增益，每个关节独立使用自己的 Kp、Kd。
     Kp = gains.Kp(:)';
     Kd = gains.Kd(:)';
 
+    % 比例项：位置偏差越大，拉回目标的作用越强。
+    % 微分项：抑制速度偏差和振荡，相当于增加阻尼。
+    % qdd_ref：期望加速度前馈，减少只靠误差追赶轨迹造成的滞后。
+    % 使用 .* 是逐关节相乘，不是完整矩阵乘法。
     tau = Kp .* (q_des - q) + Kd .* (qd_des - qd) + qdd_ref;
 end
