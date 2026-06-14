@@ -31,9 +31,11 @@ function result = simulate_tracking(traj, scene, params, mode)
         mode = 'kinematic';
     end
 
+    % K 为时间采样点数，n 为机器人关节数。
     K = numel(traj.t);
     n = params.n;
 
+    % 预分配输出数组，避免在循环中动态增长矩阵。
     result.t       = traj.t;
     result.q_des   = traj.q;
     result.q       = zeros(K, n);
@@ -47,14 +49,17 @@ function result = simulate_tracking(traj, scene, params, mode)
     switch lower(mode)
         case 'kinematic'
             % 运动学模式：q(t) 直接来自轨迹（理想跟踪）
+            % 不模拟惯性和控制误差，主要检查几何路径、轨迹和动画。
             result.q = traj.q;
 
         case 'dynamic'
             % 简化动力学模式：q'' = tau（M_eff = I）
             % 默认 PD 增益（关节空间对角）
+            % 对单位惯性二阶模型，Kp=100、Kd=20 近似临界阻尼配置。
             gains.Kp = 100 * ones(1, n);
             gains.Kd =  20 * ones(1, n);
 
+            % 初始实际位置取轨迹起点，初始实际速度设为 0。
             q  = traj.q(1, :);
             qd = zeros(1, n);
 
@@ -63,18 +68,22 @@ function result = simulate_tracking(traj, scene, params, mode)
             for k = 1:K-1
                 dt = traj.t(k+1) - traj.t(k);
 
+                % 根据实际状态与当前时刻的期望状态计算控制量。
                 tau = pd_controller(q, qd, ...
                                     traj.q(k, :), traj.qd(k, :), ...
                                     traj.qdd(k, :), params, gains);
 
-                % M_eff = I  →  qdd = tau
+                % 教学简化模型令 M_eff=I，并忽略科氏力、重力和摩擦，
+                % 所以 qdd=tau。真实机器人中 tau 通常是力矩，不能直接等同。
                 qdd = tau;
 
-                % 前向 Euler 积分
+                % 离散积分：先更新速度，再用新速度更新位置。
+                % dt 越小，数值仿真通常越稳定、越接近连续系统。
                 qd = qd + qdd * dt;
                 q  = q  + qd  * dt;
 
-                % 关节限位裁剪
+                % 控制超调可能令仿真关节越界，这里做保护性裁剪。
+                % 更真实的模型还应处理撞限位后的速度和冲击。
                 if isfield(params, 'qlim') && ~isempty(params.qlim)
                     q = min(max(q, params.qlim(:, 1)'), params.qlim(:, 2)');
                 end
@@ -89,9 +98,11 @@ function result = simulate_tracking(traj, scene, params, mode)
     % ---------------------------------------------------------------------
     % 误差统计
     % ---------------------------------------------------------------------
+    % 关节误差统一按“期望值 - 实际值”定义。
     result.err_q = result.q_des - result.q;
 
     for k = 1:K
+        % 末端误差不能简单用关节角误差代替，需要分别做 FK 后比较位置。
         T_des = forward_kinematics(result.q_des(k, :), params);
         T_act = forward_kinematics(result.q(k,     :), params);
         result.err_pos(k) = norm(T_des(1:3, 4) - T_act(1:3, 4));
@@ -108,15 +119,17 @@ function result = simulate_tracking(traj, scene, params, mode)
     end
 
     % ---------- 先算自适应 workspace ----------
-    % 取轨迹所有 frame 原点 + 障碍球外接盒 + base，外扩 padding
+    % 取轨迹所有 frame 原点 + 障碍球外接盒 + base，外扩 padding。
+    % workspace 太小会裁掉机械臂，太大又会让主体显示得过小。
     all_pts = zeros(K * (params.n + 1), 3);
     for k = 1:K
         [~, T_all_k] = forward_kinematics(result.q(k, :), params);
         rows = (k - 1) * (params.n + 1) + (1 : params.n + 1);
         all_pts(rows, :) = squeeze(T_all_k(1:3, 4, :))';
     end
-    all_pts = [all_pts; 0, 0, 0];   % base
+    all_pts = [all_pts; 0, 0, 0];   % 将机器人底座也纳入显示范围
     if isfield(scene, 'obstacles') && ~isempty(scene.obstacles)
+        % 球心坐标加减半径，得到障碍球包围盒的下角和上角。
         obs_lo = scene.obstacles(:, 1:3) - scene.obstacles(:, 4);
         obs_hi = scene.obstacles(:, 1:3) + scene.obstacles(:, 4);
         all_pts = [all_pts; obs_lo; obs_hi];
@@ -130,6 +143,7 @@ function result = simulate_tracking(traj, scene, params, mode)
     hold on;
 
     % 1) 自绘末端轨迹（独立于 RTB trail，一次画完整条蓝线）
+    % 预先计算整条线，避免 RTB 不同版本对 trail 参数支持不一致。
     ee_pos = zeros(K, 3);
     for k = 1:K
         T_k = forward_kinematics(result.q(k, :), params);
@@ -137,7 +151,7 @@ function result = simulate_tracking(traj, scene, params, mode)
     end
     plot3(ee_pos(:, 1), ee_pos(:, 2), ee_pos(:, 3), 'b-', 'LineWidth', 1.5);
 
-    % 2) 障碍球
+    % 2) 障碍球：sphere 返回单位球网格，再缩放并平移到实际位置。
     if isfield(scene, 'obstacles') && ~isempty(scene.obstacles)
         [Xs, Ys, Zs] = sphere(20);
         for i = 1:size(scene.obstacles, 1)
@@ -151,11 +165,13 @@ function result = simulate_tracking(traj, scene, params, mode)
     end
 
     % 3) 锁定 axis 到 workspace（RTB plot 调用前后都重锁一次）
+    % daspect([1 1 1]) 保证三个坐标方向比例一致，球不会显示成椭球。
     xlim(workspace(1:2)); ylim(workspace(3:4)); zlim(workspace(5:6));
     set(gca, 'XLimMode', 'manual', 'YLimMode', 'manual', 'ZLimMode', 'manual');
     daspect([1 1 1]);
 
     % 4) RTB 动画（不带 'trail'，蓝线已在第 1 步画好）
+    % 最多抽取约 60 帧展示，避免 K 很大时动画过慢。
     plot_every = max(1, round(K / 60));
     idx_plot = unique([1 : plot_every : K, K]);
     robot.plot(result.q(idx_plot, :), 'fps', 20, ...

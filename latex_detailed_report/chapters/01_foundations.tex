@@ -1,0 +1,258 @@
+\chapter{零基础预备知识}
+
+\section{机器人运动学到底在研究什么}
+
+想象桌面上放着一条由六个旋转关节连接起来的机械臂。每个关节都像门轴一样
+可以转动。六个关节角写成
+\[
+\q=[q_1,q_2,q_3,q_4,q_5,q_6].
+\]
+这里的 $q_i$ 不是坐标点，而是第 $i$ 个电机轴转过的角度。当前项目统一使用
+\textbf{弧度}。常见换算为
+\[
+180^\circ=\pi\ \mathrm{rad},\qquad
+1^\circ=\frac{\pi}{180}\ \mathrm{rad}.
+\]
+
+机器人学里最常见的两个问题是：
+
+\begin{description}
+  \item[正运动学（FK）] 已知六个关节角，计算机械臂末端的位置和朝向。
+  \item[逆运动学（IK）] 已知希望末端到达的位置和朝向，反过来求六个关节角。
+\end{description}
+
+正运动学像“知道每节手臂怎么弯，算手掌在哪里”；逆运动学像“我想让手掌碰到
+杯子，反推肩、肘、腕应该怎么转”。
+
+\section{标量、向量和矩阵}
+
+\subsection{标量}
+
+只有一个数的量称为标量，例如球形障碍物的半径 $r=90\ \mathrm{mm}$。
+
+\subsection{向量}
+
+三个数排成一列可以表示三维空间中的位置：
+\[
+\p=
+\begin{bmatrix}x\\y\\z\end{bmatrix}.
+\]
+例如 $\p=[480,200,90]^T$ 表示相对于基坐标系，沿 $x$ 方向
+\SI{480}{mm}、沿 $y$ 方向 \SI{200}{mm}、沿 $z$ 方向 \SI{90}{mm}。
+上标 $T$ 表示转置，即把行向量变成列向量。
+
+向量的长度称为二范数：
+\[
+\norm{\p}_2=\sqrt{x^2+y^2+z^2}.
+\]
+代码中的 \code{norm(p)} 就是在算这个量。
+
+\subsection{矩阵}
+
+矩阵可以看成按行列摆放的一组数字。旋转矩阵是一个 $3\times3$ 矩阵：
+\[
+\R=
+\begin{bmatrix}
+r_{11}&r_{12}&r_{13}\\
+r_{21}&r_{22}&r_{23}\\
+r_{31}&r_{32}&r_{33}
+\end{bmatrix}.
+\]
+它的三列分别是新坐标系的 $x$、$y$、$z$ 轴在旧坐标系中指向哪里。
+
+\section{坐标系为什么必不可少}
+
+“末端在 $(100,200,300)$”这句话并不完整，因为必须说明相对于谁测量。
+机器人通常给每根连杆建立一个坐标系：
+\[
+\{0\},\{1\},\ldots,\{6\}.
+\]
+$\{0\}$ 是固定在机器人底座上的基坐标系，$\{6\}$ 固定在末端。
+
+符号 ${}^0\p_6$ 表示“坐标系 6 的原点，在坐标系 0 中的位置”。
+符号 ${}^0\R_6$ 表示“坐标系 6 相对于坐标系 0 的朝向”。
+
+\section{三维旋转}
+
+\subsection{绕三个基本轴旋转}
+
+绕 $x$ 轴旋转 $\alpha$：
+\[
+\R_x(\alpha)=
+\begin{bmatrix}
+1&0&0\\
+0&\cos\alpha&-\sin\alpha\\
+0&\sin\alpha&\cos\alpha
+\end{bmatrix}.
+\]
+
+绕 $y$ 轴旋转 $\beta$：
+\[
+\R_y(\beta)=
+\begin{bmatrix}
+\cos\beta&0&\sin\beta\\
+0&1&0\\
+-\sin\beta&0&\cos\beta
+\end{bmatrix}.
+\]
+
+绕 $z$ 轴旋转 $\theta$：
+\[
+\R_z(\theta)=
+\begin{bmatrix}
+\cos\theta&-\sin\theta&0\\
+\sin\theta&\cos\theta&0\\
+0&0&1
+\end{bmatrix}.
+\]
+
+\begin{warningbox}[矩阵乘法的顺序不能交换]
+通常 $\R_x\R_z\ne\R_z\R_x$。先绕 $x$ 转再绕 $z$ 转，与先绕 $z$
+再绕 $x$ 转，最终朝向一般不同。因此 MDH 公式中的乘法顺序必须与代码完全一致。
+\end{warningbox}
+
+\subsection{旋转矩阵的三个重要性质}
+
+合法旋转矩阵满足
+\[
+\R^T\R=\boldsymbol{I},\qquad
+\R^{-1}=\R^T,\qquad
+\det(\R)=1.
+\]
+第二条非常重要：旋转的逆可以直接用转置得到。项目二中
+\[
+\R_{36}=\R_{03}^T\R_{06}
+\]
+正是利用了这一性质。
+
+\section{齐次变换矩阵}
+
+只用 $\R$ 能描述朝向，只用 $\p$ 能描述位置。为了把二者放在一个矩阵里，
+机器人学使用 $4\times4$ 齐次变换矩阵：
+\[
+\T=
+\begin{bmatrix}
+\R&\p\\
+0\ 0\ 0&1
+\end{bmatrix}.
+\]
+
+若
+\[
+{}^0\T_1=
+\begin{bmatrix}{}^0\R_1&{}^0\p_1\\0&1\end{bmatrix},\quad
+{}^1\T_2=
+\begin{bmatrix}{}^1\R_2&{}^1\p_2\\0&1\end{bmatrix},
+\]
+那么从 0 到 2 的变换为
+\[
+{}^0\T_2={}^0\T_1\,{}^1\T_2.
+\]
+这就是正运动学循环中不断执行 \code{T = T * A\_i} 的原因。
+
+\section{标准 DH 与改进 DH}
+
+DH 方法用四个参数描述相邻两根连杆：
+\[
+a,\quad \alpha,\quad d,\quad \theta.
+\]
+直观解释如下：
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{0.92\textwidth}{cX}
+\toprule
+参数 & 含义\\
+\midrule
+$a$ & 沿某个 $x$ 轴方向的连杆长度\\
+$\alpha$ & 相邻两个关节轴之间的扭转角\\
+$d$ & 沿关节轴方向的偏移距离\\
+$\theta$ & 绕关节轴旋转的角度；转动关节中它含有关节变量\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+本项目采用改进 DH（MDH）：
+\[
+{}^{i-1}\T_i=
+\R_x(\alpha_{i-1})
+\T_x(a_{i-1})
+\R_z(\theta_i)
+\T_z(d_i).
+\]
+把四个基本变换相乘，得到代码 \code{mdh\_transform.m} 使用的矩阵：
+\[
+\begin{bmatrix}
+c_\theta&-s_\theta&0&a\\
+s_\theta c_\alpha&c_\theta c_\alpha&-s_\alpha&-d s_\alpha\\
+s_\theta s_\alpha&c_\theta s_\alpha&c_\alpha&d c_\alpha\\
+0&0&0&1
+\end{bmatrix}.
+\]
+其中 $c_\theta=\cos\theta$，$s_\theta=\sin\theta$，其余同理。
+
+\section{关节角偏置 offset}
+
+真实电机零位不一定等于数学模型中 $\theta_i=0$ 的姿态，所以代码使用
+\[
+\theta_i=q_i+\mathrm{offset}_i.
+\]
+SR3 的偏置为
+\[
+\mathrm{offset}=
+\left[\pi,\frac{\pi}{2},\frac{\pi}{2},\pi,0,0\right].
+\]
+例如电机读数 $q_2=0$ 时，MDH 公式实际使用
+$\theta_2=\pi/2$。漏掉偏置会让整台机器人模型“从第一步就站错姿势”。
+
+\section{叉乘及其物理意义}
+
+两个三维向量的叉乘为
+\[
+\boldsymbol{a}\times\boldsymbol{b}=
+\begin{bmatrix}
+a_yb_z-a_zb_y\\
+a_zb_x-a_xb_z\\
+a_xb_y-a_yb_x
+\end{bmatrix}.
+\]
+其方向同时垂直于 $\boldsymbol{a}$ 和 $\boldsymbol{b}$。
+
+对转动关节，如果关节轴方向为 $\boldsymbol{z}$，从轴上的一点到末端的向量为
+$\p_n-\p_i$，则关节转动产生的瞬时末端线速度方向为
+\[
+\boldsymbol{z}\times(\p_n-\p_i).
+\]
+这就是几何雅可比线速度部分的来源。
+
+\section{MATLAB 最低限度语法}
+
+\begin{longtable}{p{0.34\textwidth}p{0.58\textwidth}}
+\toprule
+代码 & 含义\\
+\midrule
+\endhead
+\code{q(:)'} & 先把数据拉成列向量，再转成行向量，保证形状为 $1\times n$\\
+\code{zeros(6,n)} & 创建 $6\times n$ 的全零矩阵\\
+\code{eye(4)} & 创建 $4\times4$ 单位矩阵\\
+\code{A*B} & 矩阵乘法\\
+\code{A.*B} & 对应元素逐个相乘\\
+\code{A\textbackslash b} & 解线性方程 $Ax=b$，通常比 \code{inv(A)*b} 稳定\\
+\code{T(1:3,4)} & 取齐次矩阵前三行、第四列，即位置向量\\
+\code{T(1:3,1:3)} & 取左上角旋转矩阵\\
+\code{cross(a,b)} & 三维叉乘\\
+\code{norm(x)} & 向量长度；矩阵时需留意所用范数\\
+\code{size(A,1)} & 矩阵行数\\
+\code{end+1} & 在数组末尾添加新元素\\
+\code{struct(...)} & 创建带命名字段的数据结构\\
+\bottomrule
+\end{longtable}
+
+\begin{plainbox}[读代码的核心方法]
+看到一行代码时，先写出每个变量的尺寸。例如
+\[
+\J:6\times6,\quad \e:6\times1,\quad
+\J^T(\J\J^T+\lambda^2I)^{-1}\e:6\times1.
+\]
+尺寸对得上，代码才可能正确；尺寸对不上，公式一定无法直接运行。
+\end{plainbox}

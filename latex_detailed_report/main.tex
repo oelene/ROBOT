@@ -1,0 +1,183 @@
+% !TEX program = xelatex
+\documentclass[UTF8,a4paper,12pt,openany]{ctexbook}
+
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{geometry}
+\usepackage{booktabs,longtable,array,tabularx,multirow}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+\usepackage{bookmark}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{siunitx}
+\usepackage{etoolbox}
+
+\setmonofont{Consolas}
+
+\geometry{left=2.45cm,right=2.25cm,top=2.45cm,bottom=2.45cm,headheight=15pt}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.25em}
+\setlist{nosep,leftmargin=2.2em}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!55!black,
+  urlcolor=teal!60!black,
+  citecolor=green!40!black,
+  pdftitle={SR3机械臂项目二与项目三超详细教程},
+  pdfauthor={机器人课程设计小组}
+}
+
+\definecolor{codebg}{RGB}{247,248,250}
+\definecolor{codekw}{RGB}{0,75,150}
+\definecolor{codecomment}{RGB}{80,120,80}
+\definecolor{codestring}{RGB}{160,70,40}
+\definecolor{boxblue}{RGB}{235,245,255}
+\definecolor{boxyellow}{RGB}{255,249,225}
+\definecolor{boxred}{RGB}{255,238,238}
+
+\lstdefinelanguage{Matlab}{
+  keywords={break,case,catch,classdef,continue,else,elseif,end,for,function,
+    global,if,otherwise,parfor,persistent,return,spmd,switch,try,while},
+  sensitive=true,
+  morecomment=[l]\%,
+  morestring=[m]'
+}
+\lstset{
+  language=Matlab,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecomment},
+  stringstyle=\color{codestring},
+  backgroundcolor=\color{codebg},
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt,
+  frame=single,
+  rulecolor=\color{gray!35},
+  breaklines=true,
+  breakatwhitespace=false,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  tabsize=4,
+  captionpos=b,
+  literate={λ}{{$\lambda$}}1 {≥}{{$\geq$}}1
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{SR3机械臂课程设计}
+\fancyhead[R]{项目二：运动学 \quad 项目三：路径规划}
+\fancyfoot[C]{\thepage}
+
+\newcommand{\q}{\boldsymbol{q}}
+\newcommand{\qd}{\dot{\boldsymbol{q}}}
+\newcommand{\qdd}{\ddot{\boldsymbol{q}}}
+\newcommand{\R}{\boldsymbol{R}}
+\newcommand{\p}{\boldsymbol{p}}
+\newcommand{\T}{\boldsymbol{T}}
+\newcommand{\J}{\boldsymbol{J}}
+\newcommand{\e}{\boldsymbol{e}}
+\newcommand{\norm}[1]{\left\lVert #1\right\rVert}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\newenvironment{plainbox}[1][知识点]
+{\begin{center}\begin{minipage}{0.94\textwidth}
+ \colorbox{boxblue}{\parbox{0.965\textwidth}{\textbf{#1}}}\smallskip\par}
+{\end{minipage}\end{center}}
+
+\newenvironment{warningbox}[1][特别注意]
+{\begin{center}\begin{minipage}{0.94\textwidth}
+ \colorbox{boxyellow}{\parbox{0.965\textwidth}{\textbf{#1}}}\smallskip\par}
+{\end{minipage}\end{center}}
+
+\newenvironment{dangerbox}[1][容易写错]
+{\begin{center}\begin{minipage}{0.94\textwidth}
+ \colorbox{boxred}{\parbox{0.965\textwidth}{\textbf{#1}}}\smallskip\par}
+{\end{minipage}\end{center}}
+
+\begin{document}
+
+\begin{titlepage}
+  \centering
+  \vspace*{1.5cm}
+  {\Huge\bfseries SR3 六自由度机械臂课程设计\par}
+  \vspace{0.8cm}
+  {\LARGE\bfseries 项目二：正运动学、逆运动学与雅可比\par}
+  \vspace{0.3cm}
+  {\LARGE\bfseries 项目三：路径规划、轨迹生成与跟踪控制\par}
+  \vspace{1.2cm}
+  {\Large 从零开始的超详细原理、推导、代码与测试教程\par}
+  \vfill
+  \begin{tabular}{rl}
+    课程名称：& 机器人课程设计\\[0.35cm]
+    机械臂型号：& xMate SR3\\[0.35cm]
+    小组成员：& \underline{\hspace{8cm}}\\[0.35cm]
+    学号：& \underline{\hspace{8cm}}\\[0.35cm]
+    指导教师：& \underline{\hspace{8cm}}\\[0.35cm]
+    完成日期：& \today
+  \end{tabular}
+  \vfill
+  {\large 说明：本稿既可作为课程设计报告底稿，也可作为答辩复习讲义。}
+\end{titlepage}
+
+\frontmatter
+\chapter*{写在最前面：这份文档怎么读}
+\addcontentsline{toc}{chapter}{写在最前面：这份文档怎么读}
+
+这份文档故意写得非常慢、非常细。阅读时不要求提前懂矩阵、机器人学或
+MATLAB。每遇到一个公式，文档都会尽量回答四个问题：
+
+\begin{enumerate}
+  \item 这个量是什么？
+  \item 这个公式从哪里来？
+  \item 它在机器人运动中表示什么？
+  \item 它在代码中为什么要这样写？
+\end{enumerate}
+
+本报告严格对应当前仓库中的 SR3 实现。需要提前说明一个事实：
+
+\nolinkurl{inverse_kinematics_analytical.m} 虽然沿用了“解析逆运动学”的文件名，
+但当前代码实际采用的是\textbf{多初值阻尼最小二乘数值搜索}，再通过正运动学
+反校验和去重得到多组候选解。因此本文会分开讲：
+
+\begin{itemize}
+  \item 课程题目要求的 Pieper 分离法和闭式解析逆解思想；
+  \item 当前仓库真正运行的 DLS 数值逆解算法；
+  \item 两者为什么不同，以及报告和答辩时应如何如实说明。
+\end{itemize}
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+\mainmatter
+\include{chapters/01_foundations}
+\include{chapters/02_project2_kinematics}
+\include{chapters/03_project3_planning}
+\include{chapters/04_code_and_tests}
+
+\appendix
+\include{chapters/appendix_code}
+
+\backmatter
+\chapter*{结语}
+\addcontentsline{toc}{chapter}{结语}
+项目二解决“给定关节角，末端在哪里”和“给定末端位姿，关节应该转多少”；
+项目三解决“从一个构型到另一个构型，怎样避开障碍并平稳地走过去”。
+把这两部分连起来，就得到一条完整的机器人运动链：
+\[
+\text{建模}\rightarrow\text{正/逆运动学}\rightarrow
+\text{碰撞检测}\rightarrow\text{路径规划}\rightarrow
+\text{轨迹生成}\rightarrow\text{闭环跟踪}.
+\]
+真正需要掌握的不是背下某一行 MATLAB，而是知道每一行代码对应上面链条中的
+哪一个物理问题、数学问题和工程约束。
+
+\end{document}

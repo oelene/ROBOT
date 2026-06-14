@@ -1,0 +1,84 @@
+\chapter{核心 MATLAB 源码附录}
+
+本附录通过 \code{\textbackslash lstinputlisting} 直接读取仓库中的当前源码。
+因此代码更新后重新编译，附录也会同步更新。
+
+\section{项目二核心代码}
+
+\subsection{机器人参数}
+\lstinputlisting[caption={robot\_params.m}]{../project2/robot_params.m}
+
+\subsection{MDH 参数表构造}
+\lstinputlisting[caption={build\_mdh\_table.m}]{../project2/build_mdh_table.m}
+
+\subsection{单节 MDH 变换}
+\lstinputlisting[caption={mdh\_transform.m}]{../project2/mdh_transform.m}
+
+\subsection{正运动学}
+\lstinputlisting[caption={forward\_kinematics.m}]{../project2/forward_kinematics.m}
+
+\subsection{几何雅可比}
+\lstinputlisting[caption={jacobian\_geometric.m}]{../project2/jacobian_geometric.m}
+
+\subsection{DLS 数值逆运动学}
+\lstinputlisting[caption={inverse\_kinematics\_numerical.m}]{../project2/inverse_kinematics_numerical.m}
+
+\subsection{多初值逆运动学封装}
+\lstinputlisting[caption={inverse\_kinematics\_analytical.m}]{../project2/inverse_kinematics_analytical.m}
+
+\subsection{逆解选择}
+\lstinputlisting[caption={select\_ik\_solution.m}]{../project2/select_ik_solution.m}
+
+\section{项目三核心代码}
+
+\subsection{路径规划}
+\lstinputlisting[caption={plan\_path.m}]{../project3/plan_path.m}
+
+\subsection{轨迹生成}
+\lstinputlisting[caption={generate\_trajectory.m}]{../project3/generate_trajectory.m}
+
+\subsection{PD 控制器}
+\lstinputlisting[caption={pd\_controller.m}]{../project3/pd_controller.m}
+
+\subsection{跟踪仿真}
+\lstinputlisting[caption={simulate\_tracking.m}]{../project3/simulate_tracking.m}
+
+\chapter{运行命令与提交前检查表}
+
+\section{MATLAB 运行方式}
+
+\begin{lstlisting}
+addpath('../project1');
+addpath('../project2');
+addpath('../project3');
+
+cd('../project2');
+main_project2_test;
+
+cd('../project3');
+main_project3_test;
+\end{lstlisting}
+
+\section{LaTeX 编译方式}
+
+在 \code{latex\_detailed\_report} 文件夹中使用 XeLaTeX：
+\begin{lstlisting}[language={}]
+xelatex main.tex
+xelatex main.tex
+\end{lstlisting}
+编译两次是为了让目录、页码和交叉引用稳定。
+
+\section{提交前检查表}
+
+\begin{enumerate}
+  \item 封面小组成员、学号、教师和日期已填写；
+  \item 文档中“数值 IK 与解析 IK 的区别”表述真实；
+  \item easy、hard 场景均已实际运行；
+  \item 测试输出来自本机真实运行，没有手工伪造；
+  \item 3D 场景图和 $q,\dot q,\ddot q$ 曲线已加入；
+  \item 最小安全距离曲线已加入；
+  \item 速度、加速度峰值与允许值做了比较；
+  \item AI 工具使用声明按实际情况修改；
+  \item 每位成员能解释 DLS、碰撞检测、BiRRT 和五次时间缩放；
+  \item 最终 PDF 中目录、公式、中文、代码换行均正常。
+\end{enumerate}

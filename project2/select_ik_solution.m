@@ -31,10 +31,13 @@ function [q_best, idx] = select_ik_solution(Q_all, q_ref, params)
     if isempty(Q_all)
         error('IK 无解：传入的 Q_all 为空，请检查目标位姿是否在工作空间内。');
     end
+    % 参考角统一为行向量。通常 q_ref 取机器人当前构型，
+    % 选择离它最近的解可以减少下一步运动中的关节跳变。
     q_ref = q_ref(:)';
 
     % 先按关节限位过滤，再从可行解中选择离参考关节角最近的一组。
     % 角度差按 2*pi 周期折算，避免 q 与 q+2*pi 被误判为距离很远。
+    % feasible(k)=true 表示第 k 组 IK 解满足关节限位。
     feasible = true(size(Q_all, 1), 1);
     if isfield(params, 'qlim') && ~isempty(params.qlim)
         tol = 1e-9;
@@ -44,9 +47,13 @@ function [q_best, idx] = select_ik_solution(Q_all, q_ref, params)
 
     candidate_idx = find(feasible);
     if isempty(candidate_idx)
+        % 理论上最好直接报“无可行解”。这里保留原框架的宽松行为：
+        % 如果所有解都越限，仍从完整解集中选最近者，让调用者自行处理。
         candidate_idx = (1:size(Q_all, 1))';
     end
 
+    % 先把每个关节的角度差折算到 [-pi,pi)，避免把 q 与 q+2*pi
+    % 错认为距离很远；再计算六个关节共同的欧氏距离。
     diffs = wrap_to_pi(Q_all(candidate_idx, :) - q_ref);
     dists = vecnorm(diffs, 2, 2);
     [~, local_idx] = min(dists);

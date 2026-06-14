@@ -1,0 +1,378 @@
+\chapter{项目三：路径规划、轨迹生成与跟踪}
+
+\section{路径、轨迹、控制不是同一个东西}
+
+\begin{description}
+  \item[路径] 只回答“经过哪些构型”，不包含时间。
+  \item[轨迹] 回答“每个时刻处于哪个构型、速度和加速度是多少”。
+  \item[控制] 根据期望轨迹和实际状态的误差，产生驱动命令。
+\end{description}
+
+项目三的完整流程是
+\[
+\text{scene}
+\xrightarrow{\code{plan\_path}}
+\text{path}
+\xrightarrow{\code{generate\_trajectory}}
+\text{traj}
+\xrightarrow{\code{simulate\_tracking}}
+\text{result}.
+\]
+
+\section{为什么选择关节空间规划}
+
+六轴机械臂的一个状态就是六维向量 $\q$。关节空间规划直接从
+$\q_{\mathrm{start}}$ 搜索到 $\q_{\mathrm{goal}}$。
+
+优点是：
+\begin{itemize}
+  \item 每个搜索节点天然是一组完整关节角；
+  \item 容易检查关节限位；
+  \item 不需要对每个任务空间采样点反复求 IK；
+  \item 多解跳变问题较少。
+\end{itemize}
+
+缺点是六维空间难以直观绘制，而且关节空间中的直线映射到任务空间后通常是
+弯曲的，仍必须通过正运动学做碰撞检测。
+
+\section{场景数据结构}
+
+\code{scene} 中最重要的字段为：
+\[
+\q_{\mathrm{start}},\quad
+\q_{\mathrm{goal}},\quad
+\text{obstacles},\quad T_{\mathrm{total}},\quad dt.
+\]
+每个球障碍物写成一行
+\[
+[c_x,c_y,c_z,r].
+\]
+
+\section{碰撞检测：为什么不能只看末端}
+
+机械臂末端绕过球，不代表手臂中间的连杆也绕过球。因此代码先通过函数
+\nolinkurl{forward_kinematics} 获得所有坐标系原点：
+\[
+\p_0,\p_1,\ldots,\p_6.
+\]
+再把相邻点之间的线段近似为机械臂连杆。
+
+\subsection{点到线段最短距离}
+
+线段端点为 $\boldsymbol{A},\boldsymbol{B}$，球心为 $\boldsymbol{C}$。
+令
+\[
+\boldsymbol{AB}=\boldsymbol{B}-\boldsymbol{A}.
+\]
+把 $\boldsymbol{C}-\boldsymbol{A}$ 投影到 $\boldsymbol{AB}$ 上：
+\[
+t_0=
+\frac{(\boldsymbol{C}-\boldsymbol{A})^T\boldsymbol{AB}}
+{\boldsymbol{AB}^T\boldsymbol{AB}}.
+\]
+如果 $t_0<0$，最近点是 $A$；如果 $t_0>1$，最近点是 $B$；否则最近点在线段
+内部。因此
+\[
+t=\max(0,\min(1,t_0)),
+\qquad
+\boldsymbol{P}=\boldsymbol{A}+t\boldsymbol{AB}.
+\]
+最短距离为
+\[
+d=\norm{\boldsymbol{P}-\boldsymbol{C}}.
+\]
+若 $d<r$，线段进入球体，判为碰撞。
+
+\subsection{状态合法不等于边合法}
+
+两个端点都不碰撞，中间仍可能穿过障碍。因此对边
+$\q_a\rightarrow\q_b$ 做插值：
+\[
+\q(s)=(1-s)\q_a+s\q_b,\qquad s\in[0,1].
+\]
+当前规划器取 25 个 $s$ 值逐个检查。采样越密越安全，但计算越慢。
+
+\begin{dangerbox}[离散检测不是连续数学保证]
+25 个采样点全部安全，只能说明这些采样点安全。若机械臂在两个采样点之间快速
+穿过很小的障碍，仍可能漏检。工程上可减小关节插值步长、按连杆最大位移自适应
+采样，或使用连续碰撞检测。
+\end{dangerbox}
+
+\section{先试直线为什么合理}
+
+如果起点到终点的关节空间直线本身无碰撞，就没有必要运行随机搜索。
+直线路径只需两个路点，路径短、计算快、结果稳定。
+
+因此 \code{plan\_path} 首先调用
+\code{is\_edge\_valid(q\_start,q\_goal,...)}。只有直线失败才启动 BiRRT。
+
+\section{RRT 的基本思想}
+
+RRT 是快速扩展随机树。可以把它想成从起点长出一棵树：
+
+\begin{enumerate}
+  \item 在关节限位盒子中随机选一个点 $\q_{\mathrm{rand}}$；
+  \item 在树中寻找离它最近的节点 $\q_{\mathrm{near}}$；
+  \item 从最近节点朝随机点走一个固定步长，得到 $\q_{\mathrm{new}}$；
+  \item 如果新状态和连接边都安全，就把新节点加入树；
+  \item 重复直到树靠近目标。
+\end{enumerate}
+
+\subsection{最近邻}
+
+代码使用普通欧氏距离：
+\[
+d_k=\norm{\q_k-\q_{\mathrm{rand}}}_2^2.
+\]
+平方不影响最近节点是谁，同时省去开平方。
+
+\subsection{Steer}
+
+设
+\[
+\boldsymbol{\delta}=\q_{\mathrm{to}}-\q_{\mathrm{from}}.
+\]
+若距离小于步长，直接到目标；否则只前进一步：
+\[
+\q_{\mathrm{new}}=
+\q_{\mathrm{from}}+
+\Delta q\frac{\boldsymbol{\delta}}{\norm{\boldsymbol{\delta}}}.
+\]
+
+\section{为什么使用双向 RRT-Connect}
+
+普通 RRT 只从起点生长。双向方法同时建立：
+\[
+\mathcal{T}_a\text{ 从起点生长},\qquad
+\mathcal{T}_b\text{ 从终点生长}.
+\]
+一棵树扩出新节点后，另一棵树不断朝它延伸，直到碰撞或成功连接。
+每轮再交换两棵树的角色。两边同时长，通常比单向搜索更快相遇。
+
+\begin{figure}[H]
+\centering
+\resizebox{0.92\textwidth}{!}{%
+\begin{tikzpicture}[
+  node distance=8mm and 15mm,
+  block/.style={rectangle,rounded corners,draw,fill=blue!6,align=center,
+    minimum width=34mm,minimum height=8mm},
+  decision/.style={diamond,draw,fill=yellow!12,align=center,aspect=2.1},
+  line/.style={-{Latex[length=2mm]},thick}
+]
+\node[block] (start) {读入起点、终点、障碍};
+\node[decision,below=of start] (straight) {直线边是否安全？};
+\node[block,below left=of straight] (direct) {返回两点路径};
+\node[block,below right=of straight] (trees) {建立起点树与终点树};
+\node[block,below=of trees] (sample) {随机采样并扩展树 A};
+\node[block,below=of sample] (connect) {树 B 尝试连接新节点};
+\node[decision,below=of connect] (met) {两棵树连接？};
+\node[block,below left=of met] (swap) {交换两棵树继续};
+\node[block,below right=of met] (merge) {回溯、拼接、shortcut};
+\draw[line] (start)--(straight);
+\draw[line] (straight)--node[left]{是}(direct);
+\draw[line] (straight)--node[right]{否}(trees);
+\draw[line] (trees)--(sample);
+\draw[line] (sample)--(connect);
+\draw[line] (connect)--(met);
+\draw[line] (met)--node[left]{否}(swap);
+\draw[line] (swap.west) -| ++(-10mm,0) |- (sample.west);
+\draw[line] (met)--node[right]{是}(merge);
+\end{tikzpicture}
+}
+\caption{当前路径规划器的总体流程}
+\end{figure}
+
+\section{树的数据结构和路径回溯}
+
+每棵树保存：
+\begin{itemize}
+  \item \code{tree.q}：每一行是一个节点；
+  \item \code{tree.parent}：每个节点的父节点编号。
+\end{itemize}
+
+新节点加入时记录它从哪个节点扩展而来。连接成功后，从连接节点沿
+\code{parent} 一直回到根，就得到半条路径。两棵树各回溯一次，再翻转并拼接。
+
+\section{目标偏置与确定性}
+
+完全随机采样可能长时间不朝目标前进。当前代码每 5 次迭代直接令
+\[
+\q_{\mathrm{rand}}=\q_{\mathrm{goal}},
+\]
+这叫目标偏置。
+
+代码固定 \code{rng(3,'twister')}，所以同一场景通常得到相同结果，便于测试、
+调试和报告复现。但固定种子不等于算法对所有新场景都可靠。
+
+\section{当前关键参数为什么这样写}
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{0.94\textwidth}{lclX}
+\toprule
+参数 & 当前值 & 单位 & 作用\\
+\midrule
+最大迭代次数 & 6000 & 次 & 防止搜索无限运行\\
+步长 & $0.12\sim0.35$ & rad & 太大易撞，太小搜索慢\\
+连接阈值 & 等于步长 & rad & 判断两树是否足够接近\\
+边采样数 & 25 & 个 & 检查插值边的碰撞\\
+目标偏置 & 每 5 次 & -- & 提高向目标生长概率\\
+随机种子 & 3 & -- & 保证结果可复现\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Shortcut 路径简化}
+
+RRT 原始路径常有很多锯齿路点。若路径中的第 $i$ 点可以安全直连更后面的第
+$j$ 点，就删除二者之间的多余点：
+\[
+[\q_1,\ldots,\q_i,\q_{i+1},\ldots,\q_j,\ldots]
+\rightarrow
+[\q_1,\ldots,\q_i,\q_j,\ldots].
+\]
+当前实现从最远的 $j$ 开始尝试，因此倾向于一次删掉尽可能多的节点。
+
+\section{手工绕行兜底}
+
+若 6000 次随机搜索仍失败，代码围绕中间构型对第 2、3、5 等关节施加
+以下几种正负偏移：
+\[
+\frac{\pi}{6},\quad\frac{\pi}{4},\quad
+\frac{\pi}{3},\quad\frac{\pi}{2}.
+\]
+随后尝试若干三点或四点路径。
+这能提高给定课程场景下的成功率，但带有明显启发式，不是通用完备方法。
+
+\section{路径弧长参数化}
+
+得到路点 $\q_1,\ldots,\q_M$ 后，先算每段长度：
+\[
+\ell_i=\norm{\q_{i+1}-\q_i}_2.
+\]
+总长度
+\[
+L=\sum_{i=1}^{M-1}\ell_i.
+\]
+路点对应的归一化累计弧长为
+\[
+u_1=0,\qquad
+u_i=\frac{\sum_{j=1}^{i-1}\ell_j}{L},\qquad
+u_M=1.
+\]
+这样长路径段会分配更多参数区间，短路径段分配更少。
+
+\section{五次多项式时间缩放从哪里来}
+
+希望标量进度 $s(t)$ 满足六个边界条件：
+\[
+s(0)=0,\quad s(T)=1,
+\]
+\[
+\dot{s}(0)=\dot{s}(T)=0,
+\]
+\[
+\ddot{s}(0)=\ddot{s}(T)=0.
+\]
+六个条件至少需要六个系数，所以取五次多项式。令
+\[
+\tau=\frac{t}{T},\qquad
+s(\tau)=a_0+a_1\tau+a_2\tau^2+a_3\tau^3+a_4\tau^4+a_5\tau^5.
+\]
+代入六个边界条件并解线性方程，得到
+\[
+a_0=a_1=a_2=0,\quad a_3=10,\quad a_4=-15,\quad a_5=6,
+\]
+因此
+\[
+s(\tau)=10\tau^3-15\tau^4+6\tau^5.
+\]
+导数为
+\[
+\dot{s}(t)=
+\frac{30\tau^2-60\tau^3+30\tau^4}{T},
+\]
+\[
+\ddot{s}(t)=
+\frac{60\tau-180\tau^2+120\tau^3}{T^2}.
+\]
+
+\section{从标量进度得到每个关节的轨迹}
+
+在某个时刻令 $u=s(t)$，先确定 $u$ 落在哪个路径段
+$[u_i,u_{i+1}]$。局部比例为
+\[
+\lambda=\frac{u-u_i}{u_{i+1}-u_i}.
+\]
+位置线性插值：
+\[
+\q(t)=\q_i+\lambda(\q_{i+1}-\q_i).
+\]
+该段对 $u$ 的导数为
+\[
+\frac{d\q}{du}=
+\frac{\q_{i+1}-\q_i}{u_{i+1}-u_i}.
+\]
+链式法则给出
+\[
+\dot{\q}(t)=\frac{d\q}{du}\dot{s}(t),
+\qquad
+\ddot{\q}(t)=\frac{d\q}{du}\ddot{s}(t).
+\]
+
+\begin{warningbox}[当前轨迹并非在路点处完全光滑]
+全局 $s(t)$ 很光滑，但 $\q(u)$ 在路点处是分段线性的，方向可能突然改变。
+因此 $d\q/du$ 在中间路点处可能跳变，关节速度和加速度也可能不连续。
+当前实现满足课程测试的首末边界与数值差分要求，但严格意义上不是全程
+$C^2$ 平滑轨迹。改进可使用样条、分段五次多项式或 min-jerk via-point。
+\end{warningbox}
+
+\section{PD 控制器}
+
+动态模式控制律为
+\[
+\boldsymbol{\tau}=
+\boldsymbol{K}_p\odot(\q_d-\q)
++\boldsymbol{K}_d\odot(\dot{\q}_d-\dot{\q})
++\ddot{\q}_d.
+\]
+其中 $\odot$ 表示逐关节相乘。
+
+\begin{itemize}
+  \item 比例项像弹簧，位置偏差越大，纠正越强；
+  \item 微分项像阻尼，抑制速度误差和振荡；
+  \item 前馈加速度提前告诉系统期望怎么加速。
+\end{itemize}
+
+当前仿真假设等效惯性矩阵为单位阵，忽略重力、科氏力、摩擦：
+\[
+\ddot{\q}=\boldsymbol{\tau}.
+\]
+这只是教学用简化模型，$\tau$ 在这里更像“加速度命令”，不能直接等同真实电机
+力矩。
+
+\section{Euler 积分}
+
+每个时间步长 $\Delta t$：
+\[
+\dot{\q}_{k+1}=\dot{\q}_k+\ddot{\q}_k\Delta t,
+\]
+\[
+\q_{k+1}=\q_k+\dot{\q}_{k+1}\Delta t.
+\]
+代码先更新速度再更新位置，属于半隐式形式。步长太大会导致数值不稳定。
+
+\section{项目三的局限与改进方向}
+
+\begin{enumerate}
+  \item 连杆被近似为无厚度线段，真实机械臂有外壳半径。可把障碍半径扩大安全
+  距离，或使用胶囊体碰撞模型。
+  \item 随机规划不保证在有限次数内成功。可使用 RRT-Connect 的成熟实现、
+  PRM 或 RRT*。
+  \item 六个关节直接用同一欧氏度量，未考虑不同关节运动对末端影响不同。
+  可设置关节权重。
+  \item shortcut 只减少路点，不直接优化安全余量和曲率。
+  \item 轨迹未自动检查速度、加速度峰值。可根据限值自动放大 $T$。
+  \item 动态模型过于简化。真实控制应考虑
+  $M(\q)\qdd+C(\q,\qd)\qd+g(\q)+f(\qd)$。
+\end{enumerate}

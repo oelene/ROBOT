@@ -1,0 +1,355 @@
+\chapter{项目二：正运动学、逆运动学与雅可比}
+
+\section{项目二要解决的完整问题}
+
+项目二的输入是目标末端位姿
+\[
+\T_{\mathrm{target}}=
+\begin{bmatrix}
+\R_{\mathrm{target}}&\p_{\mathrm{target}}\\
+0&1
+\end{bmatrix},
+\]
+输出是若干组可能的关节角。它不是一个孤立函数，而是一条验证链：
+\[
+\q\xrightarrow{\mathrm{FK}}\T
+\xrightarrow{\mathrm{IK}}\q'
+\xrightarrow{\mathrm{FK}}\T'.
+\]
+只有当 $\T'\approx\T$ 时，逆解才可信。
+
+\section{SR3 的 MDH 参数}
+
+\begin{table}[H]
+\centering
+\caption{当前代码采用的 SR3 MDH 参数，长度单位为 mm}
+\begin{tabular}{ccccc}
+\toprule
+$i$ & $a_{i-1}$ & $\alpha_{i-1}$ & $d_i$ & $\theta_i$\\
+\midrule
+1 & 0   & $0$             & 344   & $q_1+\pi$\\
+2 & 0   & $\pi/2$         & 0     & $q_2+\pi/2$\\
+3 & 290 & $\pi$           & 0     & $q_3+\pi/2$\\
+4 & 0   & $\pi/2$         & 290   & $q_4+\pi$\\
+5 & 0   & $-\pi/2$        & 0     & $q_5$\\
+6 & 136 & $\pi/2$         & 103.5 & $q_6$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{正运动学如何一步一步计算}
+
+\subsection{第一步：把关节角变成 MDH 表}
+
+\code{build\_mdh\_table.m} 对每个关节执行
+\[
+\theta_i=q_i+\mathrm{offset}_i,
+\]
+然后把 $[a_{i-1},\alpha_{i-1},d_i,\theta_i]$ 放入第 $i$ 行。
+
+\subsection{第二步：每一行变成一个局部变换}
+
+调用
+\[
+\boldsymbol{A}_i=
+\mathrm{mdh\_transform}(a_{i-1},\alpha_{i-1},d_i,\theta_i).
+\]
+$\boldsymbol{A}_i$ 只描述“从前一坐标系走到当前坐标系”。
+
+\subsection{第三步：把六步串起来}
+
+\[
+{}^0\T_6=
+{}^0\boldsymbol{A}_1
+{}^1\boldsymbol{A}_2
+{}^2\boldsymbol{A}_3
+{}^3\boldsymbol{A}_4
+{}^4\boldsymbol{A}_5
+{}^5\boldsymbol{A}_6.
+\]
+代码从 \code{T = eye(4)} 开始，每次右乘一个 $\boldsymbol{A}_i$。
+同时保存中间结果 \code{T\_all(:,:,i+1)}，因为碰撞检测和雅可比不仅需要
+末端，还需要每个关节原点的位置。
+
+\section{逆运动学为什么比正运动学难}
+
+正运动学只需按确定顺序代入并相乘，通常只有一个结果。逆运动学困难在于：
+
+\begin{itemize}
+  \item 同一末端位姿可能对应多组关节角；
+  \item 有些目标超出工作空间，根本无解；
+  \item 接近奇异位形时，某些关节运动效果重合；
+  \item 三角函数是周期函数，$q$ 与 $q+2k\pi$ 表示相同转角；
+  \item 机械臂还受关节限位约束。
+\end{itemize}
+
+\section{课程要求的 Pieper 分离法}
+
+\subsection{核心思想}
+
+对后三根关节轴交于一点的六轴球腕机械臂，可以把问题拆开：
+
+\begin{enumerate}
+  \item 前三轴负责把腕中心送到正确位置；
+  \item 后三轴负责把末端转到正确朝向。
+\end{enumerate}
+
+因此先解位置，再解姿态。这称为位置与姿态解耦。
+
+\subsection{腕中心}
+
+在最简单的球腕模型中，末端原点沿末端 $z$ 轴距离腕中心 $d_6$，因此
+\[
+\p_w=\p_6-d_6\R_6(:,3).
+\]
+$\R_6(:,3)$ 是末端 $z$ 轴在基坐标系中的方向。
+
+\begin{dangerbox}[当前 SR3 参数并非最简单模板]
+当前模型第六行同时含 $a_5=136$ 和 $d_6=103.5$。这意味着末端固定偏置不只
+沿 $z_6$ 方向，简单公式 $\p_w=\p-d_6\R(:,3)$ 不足以完整剥离偏置。
+这也是当前仓库最终转向通用数值 IK 的重要原因。不能把模板球腕公式不加检查地
+宣称为当前代码的精确实现。
+\end{dangerbox}
+
+\subsection{前三关节的几何解}
+
+对于理想化平面二连杆，设腕中心为
+$[x_w,y_w,z_w]^T$。第一轴先决定腕中心位于机器人哪一侧：
+\[
+\theta_1=\operatorname{atan2}(y_w,x_w).
+\]
+另一肩部构型常可写为 $\theta_1+\pi$。
+
+把三维问题投影到关节 2、3 所在平面：
+\[
+r=x_w\cos\theta_1+y_w\sin\theta_1,\qquad
+s=z_w-d_1.
+\]
+若两段有效长度为 $L_1,L_2$，根据余弦定理：
+\[
+D=\frac{r^2+s^2-L_1^2-L_2^2}{2L_1L_2}.
+\]
+当 $|D|>1$ 时三角形无法组成，目标不可达。当 $|D|\le1$ 时：
+\[
+\theta_3=
+\operatorname{atan2}\left(\pm\sqrt{1-D^2},D\right).
+\]
+正负号产生肘上、肘下两组解。再由
+\[
+\theta_2=
+\operatorname{atan2}(s,r)
+-\operatorname{atan2}
+\left(L_2\sin\theta_3,L_1+L_2\cos\theta_3\right)
+\]
+求得肩关节俯仰角。
+
+\subsection{后三关节的姿态解}
+
+前三关节确定后，先算 $\R_{03}$，目标姿态为 $\R_{06}$，于是
+\[
+\R_{36}=\R_{03}^{-1}\R_{06}=\R_{03}^{T}\R_{06}.
+\]
+再把 $\R_{36}$ 与腕部三个旋转矩阵的乘积逐元素比较，就能通过
+\code{atan2} 提取 $\theta_4,\theta_5,\theta_6$。
+
+一般情况下 $\theta_5$ 的正负分支对应腕部翻转，从而形成两组腕部解。
+于是最多有
+\[
+2\text{（肩）}\times2\text{（肘）}\times2\text{（腕）}=8
+\]
+组解。
+
+\subsection{腕部奇异}
+
+当 $\sin\theta_5\approx0$ 时，第 4 轴和第 6 轴的效果耦合。此时不是没有解，
+而是 $\theta_4$ 与 $\theta_6$ 各自不唯一，通常只有两者之和或差能够确定。
+程序必须人为选一个约定，例如令 $\theta_4=0$，再计算 $\theta_6$。
+
+\section{当前代码真正使用的 DLS 数值逆运动学}
+
+\subsection{把逆运动学改写成“不断纠错”}
+
+假设当前猜测为 $\q_k$。用正运动学得到当前位姿 $\T(\q_k)$，与目标比较得到
+六维误差：
+\[
+\e=
+\begin{bmatrix}
+\e_p\\
+\e_o
+\end{bmatrix}.
+\]
+前三维 $\e_p$ 是位置误差：
+\[
+\e_p=\p_{\mathrm{target}}-\p_{\mathrm{current}}.
+\]
+后三维 $\e_o$ 是姿态误差。代码先算
+\[
+\R_{\mathrm{err}}=
+\R_{\mathrm{target}}\R_{\mathrm{current}}^T,
+\]
+再把误差旋转矩阵转换为“旋转轴乘旋转角”的三维向量。
+
+\subsection{小运动近似与雅可比}
+
+在关节角变化很小时：
+\[
+\Delta\boldsymbol{x}\approx\J(\q)\Delta\q.
+\]
+希望 $\Delta\boldsymbol{x}$ 抵消当前误差，即
+\[
+\J\Delta\q\approx\e.
+\]
+如果直接使用 $\Delta\q=\J^{-1}\e$，会遇到两个问题：$\J$ 可能不可逆，
+接近奇异位形时数值会爆炸。
+
+\subsection{阻尼最小二乘}
+
+DLS 使用
+\[
+\Delta\q=
+\J^T\left(\J\J^T+\lambda^2\boldsymbol{I}\right)^{-1}\e.
+\]
+其中 $\lambda>0$ 是阻尼系数。$\lambda^2I$ 像给病态矩阵加一层缓冲，
+使其更容易求解。
+
+代码没有写 \code{inv(A)}，而是：
+\begin{lstlisting}
+A = J * J' + (opts.lambda^2) * eye(6);
+dq = J' * (A \ e);
+\end{lstlisting}
+因为 \code{A\textbackslash e} 会选择更稳定的线性方程求解方法。
+
+更新规则是
+\[
+\q_{k+1}=\q_k+\Delta\q^T.
+\]
+迭代直到 $\norm{\e}$ 小于阈值，或达到最大迭代次数。
+
+\subsection{阻尼系数的影响}
+
+\begin{itemize}
+  \item $\lambda$ 太小：远离奇异点时收敛快，但奇异附近可能出现巨大步长；
+  \item $\lambda$ 太大：更稳定，但每次只走很小一步，收敛慢且可能残留误差；
+  \item 当前单次 IK 默认常用 $0.01$，多初值封装中使用 $0.05$。
+\end{itemize}
+
+\section{几何雅可比如何推导}
+
+\subsection{雅可比的尺寸}
+
+六自由度机械臂的几何雅可比为
+\[
+\J=
+\begin{bmatrix}
+\J_v\\
+\J_\omega
+\end{bmatrix}\in\mathbb{R}^{6\times6}.
+\]
+它把关节速度映射为末端速度：
+\[
+\begin{bmatrix}\boldsymbol{v}\\\boldsymbol{\omega}\end{bmatrix}
+=\J(\q)\dot{\q}.
+\]
+
+\subsection{转动关节的一列}
+
+第 $i$ 个转动关节的轴方向为 $\boldsymbol{z}_i$，轴上一点为 $\p_i$，
+末端为 $\p_n$。该关节单位角速度引起：
+\[
+\J_{v,i}=\boldsymbol{z}_i\times(\p_n-\p_i),\qquad
+\J_{\omega,i}=\boldsymbol{z}_i.
+\]
+
+\subsection{MDH 中为什么不能直接拿累计矩阵的 z 轴}
+
+本项目单步顺序为
+\[
+\R_x(\alpha)\T_x(a)\R_z(\theta)\T_z(d).
+\]
+真正的关节转轴是执行前两个固定变换之后、执行 $\R_z(\theta)$ 之前的
+$z$ 轴。所以代码先计算
+\[
+\T_{\mathrm{pre}}=
+\T\,\R_x(\alpha_i)\T_x(a_i),
+\]
+再从 \code{T\_pre(1:3,3)} 取轴方向，从
+\code{T\_pre(1:3,4)} 取轴上一点。
+
+\section{姿态误差的轴角表示}
+
+任意旋转矩阵对应一个旋转轴 $\boldsymbol{u}$ 和角度 $\theta$。角度由
+\[
+\cos\theta=\frac{\operatorname{tr}(\R)-1}{2}
+\]
+得到。旋转轴乘角度为
+\[
+\boldsymbol{\omega}=
+\frac{\theta}{2\sin\theta}
+\begin{bmatrix}
+R_{32}-R_{23}\\
+R_{13}-R_{31}\\
+R_{21}-R_{12}
+\end{bmatrix}.
+\]
+当 $\theta$ 很小时，分母也很小，因此代码直接返回零向量，避免数值除零。
+
+\section{多初值为什么能找到多组解}
+
+DLS 是局部方法：从哪个初始点出发，通常会落入附近的某一个解。
+\code{build\_seed\_set} 先准备若干人为设计的肩、肘、腕构型，再在关节限位中
+生成 30 组固定随机种子。每个种子独立运行 DLS，最终可能到达不同解。
+
+候选解需经过四道筛选：
+
+\begin{enumerate}
+  \item 数值迭代必须声明收敛；
+  \item 正运动学回代的位置和姿态误差必须足够小；
+  \item 必须满足关节限位；
+  \item 与已有解的周期角距离大于阈值，否则视为重复解。
+\end{enumerate}
+
+\section{角度归一化与解的选择}
+
+角度具有周期性：
+\[
+q\equiv q+2k\pi.
+\]
+代码用
+\[
+\operatorname{wrap}(x)=\operatorname{mod}(x+\pi,2\pi)-\pi
+\]
+把角度差折算到 $[-\pi,\pi)$。
+
+选解函数先过滤关节限位，再选择离参考构型最近者：
+\[
+k^*=\arg\min_k
+\norm{\operatorname{wrap}(\q^{(k)}-\q_{\mathrm{ref}})}_2.
+\]
+这样做的工程意义是减少关节突然大幅跳动，保持动作连续。
+
+\section{当前实现的优点与局限}
+
+\subsection{优点}
+
+\begin{itemize}
+  \item 不依赖严格球腕结构，可直接适配当前完整 MDH 模型；
+  \item 每个解都经过 FK 反校验，结果可信；
+  \item DLS 在奇异附近比普通伪逆稳定；
+  \item 多初值可以得到多组候选解。
+\end{itemize}
+
+\subsection{局限}
+
+\begin{itemize}
+  \item 不能数学保证找到全部解，也不能严格保证最多恰好八组；
+  \item 计算量明显高于闭式解析解；
+  \item 收敛依赖初值、阻尼和迭代上限；
+  \item 位置以 mm、姿态以 rad 混在同一误差向量中，未设置尺度权重；
+  \item 接近旋转角 $\pi$ 时，简单轴角公式也可能数值敏感。
+\end{itemize}
+
+\begin{warningbox}[报告答辩建议]
+不要说“代码已经完整实现 Pieper 闭式解析法”。更准确的表述是：
+“报告学习并推导了 Pieper 解耦思想；由于当前 SR3 MDH 末端偏置与简化球腕模板
+不完全一致，工程代码采用多初值 DLS，并用 FK 严格反校验候选解。”
+\end{warningbox}
